@@ -1,0 +1,52 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    image: joko-image-backend:local
+    restart: unless-stopped
+    environment:
+      SUB2API_BASE_URL: ${SUB2API_BASE_URL:-http://host.docker.internal:9878/v1}
+      SUB2API_AUTH_BASE_URL: ${SUB2API_AUTH_BASE_URL:-http://host.docker.internal:9878}
+      SUB2API_USAGE_PATH: ${SUB2API_USAGE_PATH:-/v1/usage}
+      IMAGE_MODEL: ${IMAGE_MODEL:-gpt-image-2}
+      IMAGE_SIZE: ${IMAGE_SIZE:-2K}
+      IMAGE_QUALITY: ${IMAGE_QUALITY:-auto}
+      IMAGE_PRICE_1K_USD: ${IMAGE_PRICE_1K_USD:-0.134}
+      IMAGE_PRICE_2K_USD: ${IMAGE_PRICE_2K_USD:-0.201}
+      IMAGE_PRICE_4K_USD: ${IMAGE_PRICE_4K_USD:-0.268}
+      DATABASE_PATH: /data/app.sqlite3
+      STORAGE_DIR: /storage
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-300}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://image.get-money.locker,http://127.0.0.1:18080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-cybergen_session}
+      GUEST_COOKIE_NAME: ${GUEST_COOKIE_NAME:-cybergen_guest}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-2592000}
+      GUEST_TTL_SECONDS: ${GUEST_TTL_SECONDS:-31536000}
+      INSPIRATION_SOURCE_URLS: ${INSPIRATION_SOURCE_URLS:-https://raw.githubusercontent.com/EvoLinkAI/awesome-gpt-image-2-prompts/main/README.md,https://raw.githubusercontent.com/YouMind-OpenLab/awesome-gpt-image-2/main/README.md}
+      INSPIRATION_SYNC_INTERVAL_SECONDS: ${INSPIRATION_SYNC_INTERVAL_SECONDS:-21600}
+      INSPIRATION_SYNC_ON_STARTUP: ${INSPIRATION_SYNC_ON_STARTUP:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/data:/data
+      - ./backend/storage:/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  web:
+    build:
+      context: .
+      target: web
+    image: joko-image-web:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18080:80"

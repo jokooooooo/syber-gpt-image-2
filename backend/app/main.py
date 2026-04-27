@@ -201,6 +201,10 @@ def create_app(
     )
     app.mount("/storage", StaticFiles(directory=settings.storage_dir), name="storage")
 
+    @app.get("/api/health")
+    async def health() -> dict[str, str]:
+        return {"ok": "true"}
+
     @app.middleware("http")
     async def attach_viewer(request: Request, call_next):
         request.state.clear_session_cookie = False
