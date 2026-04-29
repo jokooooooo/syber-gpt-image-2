@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import type { ChangeEvent, DragEvent } from 'react';
 import { ArrowUp, Heart, ImagePlus, Grid, List, Maximize2, RefreshCw, Loader2, Search, Sparkles, X } from 'lucide-react';
 import {
   editImage,
@@ -100,6 +100,7 @@ export default function Home() {
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const [draggingReference, setDraggingReference] = useState(false);
   const [favoritePendingIds, setFavoritePendingIds] = useState<string[]>([]);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [message, setMessage] = useState('');
@@ -409,12 +410,39 @@ export default function Home() {
       setImageScale('2K');
     }
   };
+  const addReferenceFiles = useCallback(
+    (files: File[]) => {
+      const imageFiles = files.filter((file) => ['image/png', 'image/jpeg', 'image/webp'].includes(file.type));
+      if (imageFiles.length === 0) {
+        setError(t('home_ref_image_invalid'));
+        return;
+      }
+      setSelectedFiles((current) => [...current, ...imageFiles]);
+      setMessage(t('home_mode_edit'));
+    },
+    [t],
+  );
   const handleReferenceImages = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []);
-    if (files.length > 0) {
-      setSelectedFiles((current) => [...current, ...files]);
-    }
+    addReferenceFiles(Array.from(event.target.files || []));
     event.target.value = '';
+  };
+  const handleReferenceDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setDraggingReference(true);
+  };
+  const handleReferenceDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDraggingReference(false);
+    }
+  };
+  const handleReferenceDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDraggingReference(false);
+    addReferenceFiles(Array.from(event.dataTransfer.files || []));
   };
   const removeReferenceImage = (index: number) => {
     setSelectedFiles((current) => current.filter((_, currentIndex) => currentIndex !== index));
@@ -592,7 +620,15 @@ export default function Home() {
         </div>
       )}
 
-      <div className="fixed bottom-3 left-3 right-3 z-50 mx-auto max-w-[1080px] rounded-sm border border-primary/40 bg-surface-container/90 p-3 font-mono shadow-[0_-20px_40px_rgba(0,0,0,0.75)] backdrop-blur-xl md:bottom-5 md:p-4">
+      <div
+        className={`fixed bottom-3 left-3 right-3 z-50 mx-auto max-w-[1080px] rounded-sm border bg-surface-container/90 p-3 font-mono shadow-[0_-20px_40px_rgba(0,0,0,0.75)] backdrop-blur-xl transition-colors md:bottom-5 md:p-4 ${
+          draggingReference ? 'border-secondary bg-secondary/10' : 'border-primary/40'
+        }`}
+        onDragEnter={handleReferenceDragOver}
+        onDragLeave={handleReferenceDragLeave}
+        onDragOver={handleReferenceDragOver}
+        onDrop={handleReferenceDrop}
+      >
         <div className="mb-2 flex min-w-0 items-center gap-3">
           <div className="flex shrink-0 items-center gap-2 border-r border-white/10 pr-3 text-[10px] text-white/50">
             <span className="h-2 w-2 rounded-full bg-secondary" />
@@ -609,7 +645,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-2 grid grid-cols-3 gap-2 lg:grid-cols-[128px_112px_104px_1fr_auto]">
+        <div className="mb-2 grid grid-cols-3 items-end gap-2 lg:grid-cols-[128px_112px_104px_1fr_auto]">
           <GenerationSelect
             label={t('home_size')}
             value={imageScale}
@@ -767,7 +803,7 @@ function GenerationSelect({
     <label className="min-w-0">
       <span className="mb-0.5 block truncate text-[8px] uppercase tracking-[0.18em] text-white/40">{label}</span>
       <select
-        className="h-8 w-full border border-primary/20 bg-black px-2 text-xs uppercase text-primary outline-none transition-colors focus:border-primary"
+        className="h-9 w-full border border-primary/20 bg-black px-2 text-xs uppercase text-primary outline-none transition-colors focus:border-primary"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >
