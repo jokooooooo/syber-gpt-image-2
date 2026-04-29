@@ -1,13 +1,16 @@
 import { Link, useLocation } from 'react-router-dom';
-import { History, UserCircle, Terminal, CreditCard, Zap } from 'lucide-react';
+import { CreditCard, Heart, History, Terminal, UserCircle, Zap } from 'lucide-react';
+import { useAuth } from '../auth';
 import { useSite } from '../site';
 
 export default function SideNavBar() {
   const location = useLocation();
+  const { viewer } = useAuth();
   const { t } = useSite();
 
   const navItems = [
     { name: t('side_history'), path: '/history', icon: History },
+    ...(viewer?.authenticated ? [{ name: t('side_favorites'), path: '/favorites', icon: Heart }] : []),
     { name: t('side_account'), path: '/account', icon: UserCircle },
     { name: t('side_config'), path: '/config', icon: Terminal },
     { name: t('side_billing'), path: '/billing', icon: CreditCard },

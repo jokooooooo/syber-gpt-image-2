@@ -183,6 +183,14 @@ class Database:
                     UNIQUE(source_url, source_item_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS inspiration_favorites (
+                    owner_id TEXT NOT NULL,
+                    inspiration_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(owner_id, inspiration_id),
+                    FOREIGN KEY(inspiration_id) REFERENCES inspiration_prompts(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_owner_config_managed ON owner_config(managed_by_auth);
                 CREATE INDEX IF NOT EXISTS idx_user_sessions_owner_id ON user_sessions(owner_id);
                 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
@@ -190,6 +198,7 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_image_tasks_status_updated_at ON image_tasks(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_inspiration_prompts_synced_at ON inspiration_prompts(synced_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_inspiration_prompts_section ON inspiration_prompts(section);
+                CREATE INDEX IF NOT EXISTS idx_inspiration_favorites_owner_created_at ON inspiration_favorites(owner_id, created_at DESC);
                 """
             )
             self._migrate_legacy_schema(conn, settings)
@@ -533,6 +542,8 @@ class Database:
             conn.execute("UPDATE image_history SET owner_id = ? WHERE owner_id = ?", (to_owner_id, from_owner_id))
             conn.execute("UPDATE image_tasks SET owner_id = ? WHERE owner_id = ?", (to_owner_id, from_owner_id))
             conn.execute("UPDATE ledger_entries SET owner_id = ? WHERE owner_id = ?", (to_owner_id, from_owner_id))
+            conn.execute("UPDATE OR IGNORE inspiration_favorites SET owner_id = ? WHERE owner_id = ?", (to_owner_id, from_owner_id))
+            conn.execute("DELETE FROM inspiration_favorites WHERE owner_id = ?", (from_owner_id,))
             conn.execute("DELETE FROM owner_config WHERE owner_id = ?", (from_owner_id,))
 
     def create_history(self, owner_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1084,45 +1095,115 @@ class Database:
         offset: int = 0,
         q: str = "",
         section: str = "",
+        favorite_owner_id: str | None = None,
+        favorites_only: bool = False,
     ) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
-        where, params = self._inspiration_where(q=q, section=section)
+        where, params = self._inspiration_where(q=q, section=section, table_alias="p")
+        favorite_select = "0 AS favorited, NULL AS favorite_created_at"
+        favorite_join = ""
+        favorite_params: list[Any] = []
+        order_by = "p.created_at DESC, p.synced_at DESC, p.section ASC, p.title ASC"
+        if favorite_owner_id:
+            favorite_params.append(favorite_owner_id)
+            favorite_select = "CASE WHEN f.owner_id IS NULL THEN 0 ELSE 1 END AS favorited, f.created_at AS favorite_created_at"
+            favorite_join = "LEFT JOIN inspiration_favorites f ON f.inspiration_id = p.id AND f.owner_id = ?"
+            if favorites_only:
+                favorite_select = "1 AS favorited, f.created_at AS favorite_created_at"
+                favorite_join = "JOIN inspiration_favorites f ON f.inspiration_id = p.id AND f.owner_id = ?"
+                order_by = "f.created_at DESC, p.created_at DESC, p.synced_at DESC, p.section ASC, p.title ASC"
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM inspiration_prompts
+                SELECT p.*, {favorite_select}
+                FROM inspiration_prompts p
+                {favorite_join}
                 {where}
-                ORDER BY created_at DESC, synced_at DESC, section ASC, title ASC
+                ORDER BY {order_by}
                 LIMIT ? OFFSET ?
                 """,
-                (*params, limit, offset),
+                (*favorite_params, *params, limit, offset),
             ).fetchall()
         return [_inspiration_row(row) for row in rows]
 
-    def count_inspirations(self, q: str = "", section: str = "") -> int:
-        where, params = self._inspiration_where(q=q, section=section)
+    def count_inspirations(
+        self,
+        q: str = "",
+        section: str = "",
+        favorite_owner_id: str | None = None,
+        favorites_only: bool = False,
+    ) -> int:
+        where, params = self._inspiration_where(q=q, section=section, table_alias="p")
+        favorite_join = ""
+        favorite_params: list[Any] = []
+        if favorite_owner_id and favorites_only:
+            favorite_join = "JOIN inspiration_favorites f ON f.inspiration_id = p.id AND f.owner_id = ?"
+            favorite_params.append(favorite_owner_id)
         with self.connect() as conn:
             row = conn.execute(
                 f"""
                 SELECT COUNT(*) AS total
-                FROM inspiration_prompts
+                FROM inspiration_prompts p
+                {favorite_join}
                 {where}
                 """,
-                params,
+                (*favorite_params, *params),
             ).fetchone()
         return int(row["total"] if row else 0)
 
+    def get_inspiration(self, inspiration_id: str, favorite_owner_id: str | None = None) -> dict[str, Any] | None:
+        favorite_select = "0 AS favorited, NULL AS favorite_created_at"
+        favorite_join = ""
+        params: list[Any] = []
+        if favorite_owner_id:
+            favorite_select = "CASE WHEN f.owner_id IS NULL THEN 0 ELSE 1 END AS favorited, f.created_at AS favorite_created_at"
+            favorite_join = "LEFT JOIN inspiration_favorites f ON f.inspiration_id = p.id AND f.owner_id = ?"
+            params.append(favorite_owner_id)
+        params.append(inspiration_id)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT p.*, {favorite_select}
+                FROM inspiration_prompts p
+                {favorite_join}
+                WHERE p.id = ?
+                """,
+                params,
+            ).fetchone()
+        return _inspiration_row(row) if row else None
+
+    def set_inspiration_favorite(self, owner_id: str, inspiration_id: str, favorited: bool) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            exists = conn.execute("SELECT id FROM inspiration_prompts WHERE id = ?", (inspiration_id,)).fetchone()
+            if exists is None:
+                return None
+            if favorited:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO inspiration_favorites (owner_id, inspiration_id, created_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (owner_id, inspiration_id, utc_now()),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM inspiration_favorites WHERE owner_id = ? AND inspiration_id = ?",
+                    (owner_id, inspiration_id),
+                )
+        return self.get_inspiration(inspiration_id, favorite_owner_id=owner_id)
+
     @staticmethod
-    def _inspiration_where(q: str = "", section: str = "") -> tuple[str, list[Any]]:
+    def _inspiration_where(q: str = "", section: str = "", table_alias: str = "") -> tuple[str, list[Any]]:
+        prefix = f"{table_alias}." if table_alias else ""
         clauses = []
         params: list[Any] = []
         if q.strip():
-            clauses.append("(lower(title) LIKE ? OR lower(prompt) LIKE ? OR lower(author) LIKE ?)")
+            clauses.append(f"(lower({prefix}title) LIKE ? OR lower({prefix}prompt) LIKE ? OR lower({prefix}author) LIKE ?)")
             search = f"%{q.strip().lower()}%"
             params.extend([search, search, search])
         if section.strip():
-            clauses.append("section = ?")
+            clauses.append(f"{prefix}section = ?")
             params.append(section.strip())
         return (f"WHERE {' AND '.join(clauses)}" if clauses else "", params)
 
@@ -1232,6 +1313,8 @@ def _image_task_row(row: sqlite3.Row) -> dict[str, Any]:
 def _inspiration_row(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["raw"] = _json_load(data.pop("raw_json"))
+    data["favorited"] = bool(data.get("favorited", 0))
+    data["favorite_created_at"] = data.get("favorite_created_at")
     return data
 
 

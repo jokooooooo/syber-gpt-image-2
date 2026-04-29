@@ -1,7 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { ArrowUp, ImagePlus, Grid, List, Maximize2, RefreshCw, Loader2, Search, Sparkles, X } from 'lucide-react';
-import { editImage, generateImage, getConfig, getHistory, getInspirations, HistoryItem, InspirationItem, optimizePrompt } from '../api';
+import { ArrowUp, Heart, ImagePlus, Grid, List, Maximize2, RefreshCw, Loader2, Search, Sparkles, X } from 'lucide-react';
+import {
+  editImage,
+  favoriteInspiration,
+  generateImage,
+  getConfig,
+  getHistory,
+  getInspirations,
+  HistoryItem,
+  InspirationItem,
+  optimizePrompt,
+  unfavoriteInspiration,
+} from '../api';
 import { useAuth } from '../auth';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
@@ -9,6 +20,7 @@ import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
 const FEED_PAGE_SIZE = 24;
+const PROMPT_TRANSFER_KEY = 'joko_pending_prompt';
 const SIZE_OPTIONS = ['1K', '2K', '4K'];
 const SIZE_LABELS: Record<string, string> = {
   '1K': '1K (1080p)',
@@ -59,6 +71,16 @@ function mergeHistory(items: HistoryItem[]) {
   return [...merged.values()].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
+type FeedItem = {
+  key: string;
+  id: string;
+  img: string;
+  prompt: string;
+  title: string;
+  inspirationId: string | null;
+  favorited: boolean;
+};
+
 export default function Home() {
   const { viewer } = useAuth();
   const { t } = useSite();
@@ -82,11 +104,20 @@ export default function Home() {
   const [inspirationTotal, setInspirationTotal] = useState(0);
   const [inspirationSearchInput, setInspirationSearchInput] = useState('');
   const [inspirationQuery, setInspirationQuery] = useState('');
+  const [favoritePendingIds, setFavoritePendingIds] = useState<string[]>([]);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const pendingPrompt = window.sessionStorage.getItem(PROMPT_TRANSFER_KEY);
+    if (pendingPrompt) {
+      setPromptValue(pendingPrompt);
+      window.sessionStorage.removeItem(PROMPT_TRANSFER_KEY);
+    }
+  }, []);
 
   useEffect(() => {
     const previews = selectedFiles.map((file, index) => ({
@@ -273,24 +304,49 @@ export default function Home() {
     }
   }
 
+  async function handleToggleFavorite(item: FeedItem) {
+    if (!item.inspirationId) return;
+    if (!viewer?.authenticated) {
+      setError(t('home_favorite_login_required'));
+      return;
+    }
+    setError('');
+    setFavoritePendingIds((current) => (current.includes(item.inspirationId!) ? current : [...current, item.inspirationId!]));
+    try {
+      const result = item.favorited
+        ? await unfavoriteInspiration(item.inspirationId)
+        : await favoriteInspiration(item.inspirationId);
+      setInspirations((current) => current.map((inspiration) => (inspiration.id === result.item.id ? result.item : inspiration)));
+      setMessage(result.item.favorited ? t('home_favorite_saved') : t('home_favorite_removed'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFavoritePendingIds((current) => current.filter((id) => id !== item.inspirationId));
+    }
+  }
+
   const mergedHistory = mergeHistory([
     ...taskHistoryItems.filter((item) => item.status === 'succeeded' && Boolean(item.image_url)),
     ...history,
   ]);
 
-  const generatedFeed = mergedHistory.map((item) => ({
+  const generatedFeed: FeedItem[] = mergedHistory.map((item) => ({
     key: `history-${item.id}`,
     id: `ID:${item.id.slice(0, 4).toUpperCase()}`,
     img: item.image_url || '',
     prompt: item.prompt,
     title: item.mode.toUpperCase(),
+    inspirationId: null,
+    favorited: false,
   }));
-  const inspirationFeed = inspirations.map((item) => ({
+  const inspirationFeed: FeedItem[] = inspirations.map((item) => ({
     key: `case-${item.id}`,
     id: item.author || item.section,
     img: item.image_url || '',
     prompt: item.prompt,
     title: item.title,
+    inspirationId: item.id,
+    favorited: item.favorited,
   }));
   const hasSearchInput = inspirationSearchInput.trim().length > 0;
   const visibleFeed = [...(hasSearchInput ? [] : generatedFeed), ...inspirationFeed].filter((item) => item.img);
@@ -392,53 +448,72 @@ export default function Home() {
           <MasonryGrid
             items={visibleFeed}
             getKey={(item) => item.key}
-            renderItem={(item) => (
-              <div className="overflow-hidden border border-primary/30 bg-black">
-                <button
-                  className="block w-full cursor-zoom-in bg-black text-left"
-                  type="button"
-                  onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
-                >
-                  <img
-                    alt={item.id}
-                    className="block h-auto w-full opacity-95 transition-opacity duration-300 hover:opacity-100"
-                    loading="lazy"
-                    src={item.img}
-                  />
-                </button>
-                <div className="border-t border-primary/15 bg-surface-container-low/80 p-4">
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    {'title' in item && item.title ? (
+            renderItem={(item) => {
+              const canFavorite = Boolean(viewer?.authenticated && item.inspirationId);
+              const favoritePending = item.inspirationId ? favoritePendingIds.includes(item.inspirationId) : false;
+              return (
+                <div className="overflow-hidden border border-primary/30 bg-black">
+                  <button
+                    className="block w-full cursor-zoom-in bg-black text-left"
+                    type="button"
+                    onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
+                  >
+                    <img
+                      alt={item.id}
+                      className="block h-auto w-full opacity-95 transition-opacity duration-300 hover:opacity-100"
+                      loading="lazy"
+                      src={item.img}
+                    />
+                  </button>
+                  <div className="border-t border-primary/15 bg-surface-container-low/80 p-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
                       <div className="min-w-0 truncate text-[10px] uppercase tracking-widest text-secondary">{item.title}</div>
-                    ) : (
-                      <div className="min-w-0 truncate font-code-data text-[10px] text-white/35">{item.id}</div>
-                    )}
-                    <div className="shrink-0 font-code-data text-[10px] text-white/25">{item.id}</div>
-                  </div>
-                  <p className="mb-3 line-clamp-3 text-sm text-white/80">{item.prompt}</p>
-                  <div className="grid grid-cols-[44px_1fr] gap-2">
-                    <button
-                      className="flex h-10 items-center justify-center border border-white/10 bg-white/5 text-white/70 transition-all duration-300 hover:border-primary hover:text-primary"
-                      type="button"
-                      onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
-                      title={t('history_preview')}
-                    >
-                      <Maximize2 size={15} />
-                    </button>
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setPromptValue(item.prompt);
-                      }}
-                      className="flex h-10 items-center justify-center gap-2 bg-primary px-3 text-xs font-black uppercase text-black shadow-[0_0_10px_rgba(0,243,255,0.35)] transition-all duration-300 hover:bg-white hover:shadow-white/40"
-                    >
-                      <RefreshCw size={14} />
-                      {t('home_clone_prompt')}
-                    </button>
+                      <div className="shrink-0 font-code-data text-[10px] text-white/25">{item.id}</div>
+                    </div>
+                    <p className="mb-3 line-clamp-3 text-sm text-white/80">{item.prompt}</p>
+                    <div className={`grid gap-2 ${canFavorite ? 'grid-cols-[44px_44px_1fr]' : 'grid-cols-[44px_1fr]'}`}>
+                      <button
+                        className="flex h-10 items-center justify-center border border-white/10 bg-white/5 text-white/70 transition-all duration-300 hover:border-primary hover:text-primary"
+                        type="button"
+                        onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
+                        title={t('history_preview')}
+                      >
+                        <Maximize2 size={15} />
+                      </button>
+                      {canFavorite ? (
+                        <button
+                          className={`flex h-10 items-center justify-center border transition-all duration-300 disabled:cursor-not-allowed disabled:opacity-50 ${
+                            item.favorited
+                              ? 'border-secondary/50 bg-secondary/15 text-secondary hover:bg-secondary/25'
+                              : 'border-white/10 bg-white/5 text-white/70 hover:border-secondary hover:text-secondary'
+                          }`}
+                          type="button"
+                          disabled={favoritePending}
+                          onClick={() => handleToggleFavorite(item)}
+                          title={item.favorited ? t('home_unfavorite_case') : t('home_favorite_case')}
+                        >
+                          {favoritePending ? (
+                            <Loader2 className="animate-spin" size={15} />
+                          ) : (
+                            <Heart className={item.favorited ? 'fill-secondary' : ''} size={15} />
+                          )}
+                        </button>
+                      ) : null}
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setPromptValue(item.prompt);
+                        }}
+                        className="flex h-10 items-center justify-center gap-2 bg-primary px-3 text-xs font-black uppercase text-black shadow-[0_0_10px_rgba(0,243,255,0.35)] transition-all duration-300 hover:bg-white hover:shadow-white/40"
+                      >
+                        <RefreshCw size={14} />
+                        {t('home_clone_prompt')}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              );
+            }}
           />
           <div className="flex flex-col items-center gap-4 py-8">
             {loadingMoreFeed ? (

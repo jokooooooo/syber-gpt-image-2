@@ -3,6 +3,7 @@ import TopNavBar from './components/TopNavBar';
 import SideNavBar from './components/SideNavBar';
 import Home from './pages/Home';
 import History from './pages/History';
+import Favorites from './pages/Favorites';
 import Config from './pages/Config';
 import Account from './pages/Account';
 import Billing from './pages/Billing';
@@ -25,6 +26,12 @@ export default function App() {
           <>
             <SideNavBar />
             <History />
+          </>
+        } />
+        <Route path="/favorites" element={
+          <>
+            <SideNavBar />
+            <Favorites />
           </>
         } />
         <Route path="/config" element={

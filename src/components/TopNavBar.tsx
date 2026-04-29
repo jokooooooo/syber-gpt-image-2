@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Bell, CreditCard, History, ListTodo, LogOut, Menu, Terminal, UserCircle, X, Zap } from 'lucide-react';
+import { Bell, CreditCard, Heart, History, ListTodo, LogOut, Menu, Terminal, UserCircle, X, Zap } from 'lucide-react';
 import { AccountInfo, formatBalance, getAccount, logoutAccount } from '../api';
 import { useAuth } from '../auth';
 import { useSite } from '../site';
@@ -42,6 +42,7 @@ export default function TopNavBar() {
   const mobileNavItems = [
     { name: t('side_generate'), path: '/', icon: Zap },
     { name: t('side_history'), path: '/history', icon: History },
+    ...(viewer?.authenticated ? [{ name: t('side_favorites'), path: '/favorites', icon: Heart }] : []),
     { name: t('side_account'), path: '/account', icon: UserCircle },
     { name: t('side_config'), path: '/config', icon: Terminal },
     { name: t('side_billing'), path: '/billing', icon: CreditCard },
@@ -79,6 +80,16 @@ export default function TopNavBar() {
           >
             {t('top_history')}
           </Link>
+          {viewer?.authenticated ? (
+            <Link
+              to="/favorites"
+              className={`text-xs uppercase tracking-widest font-bold px-3 py-2 transition-all duration-300 hover:bg-primary/10 hover:text-primary ${
+                location.pathname === '/favorites' ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant'
+              }`}
+            >
+              {t('top_favorites')}
+            </Link>
+          ) : null}
           {!viewer?.authenticated && (
             <Link
               to="/register"

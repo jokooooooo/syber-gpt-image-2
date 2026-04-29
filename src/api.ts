@@ -81,6 +81,8 @@ export type InspirationItem = {
   prompt: string;
   image_url: string | null;
   source_link: string | null;
+  favorited: boolean;
+  favorite_created_at: string | null;
   synced_at: string;
   created_at: string;
   updated_at: string;
@@ -346,6 +348,24 @@ export function getInspirations(params: { limit?: number; offset?: number; q?: s
   if (params.section) search.set('section', params.section);
   const query = search.toString();
   return request<InspirationListResponse>(`/api/inspirations${query ? `?${query}` : ''}`);
+}
+
+export function getFavoriteInspirations(params: { limit?: number; offset?: number; q?: string; section?: string } = {}) {
+  const search = new URLSearchParams();
+  if (params.limit) search.set('limit', String(params.limit));
+  if (params.offset) search.set('offset', String(params.offset));
+  if (params.q) search.set('q', params.q);
+  if (params.section) search.set('section', params.section);
+  const query = search.toString();
+  return request<InspirationListResponse>(`/api/inspirations/favorites${query ? `?${query}` : ''}`);
+}
+
+export function favoriteInspiration(id: string) {
+  return request<{ ok: boolean; item: InspirationItem }>(`/api/inspirations/${id}/favorite`, { method: 'POST' });
+}
+
+export function unfavoriteInspiration(id: string) {
+  return request<{ ok: boolean; item: InspirationItem }>(`/api/inspirations/${id}/favorite`, { method: 'DELETE' });
 }
 
 export function getInspirationStats() {

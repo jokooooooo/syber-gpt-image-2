@@ -490,6 +490,52 @@ def test_user_can_publish_and_unpublish_history_as_public_case(tmp_path: Path) -
         assert public_cases_after == []
 
 
+def test_signed_in_user_can_favorite_public_cases(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        db = client.app.state.db
+        db.upsert_inspirations(
+            "https://example.com/README.md",
+            [
+                {
+                    "id": "case-fav-1",
+                    "source_item_id": "case-fav-1",
+                    "section": "Gallery",
+                    "title": "Favorite Demo",
+                    "author": "@demo",
+                    "prompt": "favorite prompt",
+                    "image_url": "https://example.com/favorite.jpg",
+                    "source_link": "https://example.com/post",
+                    "raw": {},
+                }
+            ],
+        )
+
+        guest_cases = client.get("/api/inspirations?q=favorite").json()["items"]
+        assert guest_cases[0]["favorited"] is False
+        assert client.post("/api/inspirations/case-fav-1/favorite").status_code == 401
+
+        login = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "secret123"})
+        assert login.status_code == 200
+
+        before = client.get("/api/inspirations?q=favorite").json()["items"][0]
+        assert before["favorited"] is False
+
+        favorited = client.post("/api/inspirations/case-fav-1/favorite")
+        assert favorited.status_code == 200
+        assert favorited.json()["item"]["favorited"] is True
+
+        after = client.get("/api/inspirations?q=favorite").json()["items"][0]
+        favorites = client.get("/api/inspirations/favorites").json()
+        assert after["favorited"] is True
+        assert favorites["total"] == 1
+        assert favorites["items"][0]["id"] == "case-fav-1"
+
+        unfavorited = client.delete("/api/inspirations/case-fav-1/favorite")
+        assert unfavorited.status_code == 200
+        assert unfavorited.json()["item"]["favorited"] is False
+        assert client.get("/api/inspirations/favorites").json()["total"] == 0
+
+
 def test_login_binds_managed_key_and_merges_guest_history(tmp_path: Path) -> None:
     auth = FakeAuthClient()
     with make_client(tmp_path, auth_client=auth) as client:
