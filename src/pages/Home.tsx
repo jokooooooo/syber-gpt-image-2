@@ -14,8 +14,10 @@ import {
   unfavoriteInspiration,
 } from '../api';
 import { useAuth } from '../auth';
+import { copyTextToClipboard } from '../clipboard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
+import PromptEditorModal from '../components/PromptEditorModal';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
@@ -95,6 +97,7 @@ export default function Home() {
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageQuality, setImageQuality] = useState('auto');
   const [previewItem, setPreviewItem] = useState<{ imageUrl: string; prompt: string } | null>(null);
+  const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
   const [feedLoading, setFeedLoading] = useState(true);
@@ -325,6 +328,20 @@ export default function Home() {
     }
   }
 
+  async function handleClonePrompt(prompt: string) {
+    setPromptValue(prompt);
+    await copyTextToClipboard(prompt);
+    setMessage(t('home_prompt_copied'));
+  }
+
+  async function handleCopyPrompt() {
+    if (!promptValue.trim()) {
+      return;
+    }
+    await copyTextToClipboard(promptValue);
+    setMessage(t('home_prompt_copied'));
+  }
+
   const mergedHistory = mergeHistory([
     ...taskHistoryItems.filter((item) => item.status === 'succeeded' && Boolean(item.image_url)),
     ...history,
@@ -502,7 +519,7 @@ export default function Home() {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          setPromptValue(item.prompt);
+                          handleClonePrompt(item.prompt).catch(() => undefined);
                         }}
                         className="flex h-10 items-center justify-center gap-2 bg-primary px-3 text-xs font-black uppercase text-black shadow-[0_0_10px_rgba(0,243,255,0.35)] transition-all duration-300 hover:bg-white hover:shadow-white/40"
                       >
@@ -600,8 +617,17 @@ export default function Home() {
               className="h-16 w-full resize-none border border-primary/20 bg-black p-2.5 text-sm text-primary shadow-inner focus:border-primary focus:outline-none placeholder:text-primary/20 md:h-20 md:p-3"
               placeholder={t('home_placeholder')}
             ></textarea>
-            <div className="mt-1 flex justify-end text-[8px] uppercase leading-none text-primary/40">
-              UTF-8 // AI-GEN // [{promptValue.length}/8000]
+            <div className="mt-1 flex items-center justify-between gap-3 text-[8px] uppercase leading-none text-primary/40">
+              <button
+                className="flex items-center gap-1 text-primary/60 transition-colors hover:text-primary"
+                type="button"
+                onClick={() => setPromptEditorOpen(true)}
+                title={t('prompt_editor_expand')}
+              >
+                <Maximize2 size={10} />
+                {t('prompt_editor_expand')}
+              </button>
+              <span>UTF-8 // AI-GEN // [{promptValue.length}/8000]</span>
             </div>
           </div>
 
@@ -665,6 +691,13 @@ export default function Home() {
         alt={previewItem?.prompt || 'preview'}
         subtitle={previewItem?.prompt}
         onClose={() => setPreviewItem(null)}
+      />
+      <PromptEditorModal
+        open={promptEditorOpen}
+        value={promptValue}
+        onChange={setPromptValue}
+        onClose={() => setPromptEditorOpen(false)}
+        onCopy={() => handleCopyPrompt().catch(() => undefined)}
       />
       {showBackToTop ? (
         <button

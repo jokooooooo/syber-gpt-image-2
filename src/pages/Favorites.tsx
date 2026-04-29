@@ -3,6 +3,7 @@ import { ArrowDown, HeartOff, Loader2, Maximize2, RefreshCw, Search } from 'luci
 import { Link, useNavigate } from 'react-router-dom';
 import { formatDate, getFavoriteInspirations, InspirationItem, unfavoriteInspiration } from '../api';
 import { useAuth } from '../auth';
+import { copyTextToClipboard } from '../clipboard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
 import { useSite } from '../site';
@@ -63,8 +64,9 @@ export default function Favorites() {
     }
   }
 
-  function handleClonePrompt(item: InspirationItem) {
+  async function handleClonePrompt(item: InspirationItem) {
     window.sessionStorage.setItem(PROMPT_TRANSFER_KEY, item.prompt);
+    await copyTextToClipboard(item.prompt);
     navigate('/');
   }
 
@@ -180,7 +182,7 @@ export default function Favorites() {
                       <button
                         className="flex h-10 min-w-0 items-center justify-center gap-2 bg-primary px-3 text-xs font-black uppercase text-black shadow-[0_0_10px_rgba(0,243,255,0.35)] transition-colors hover:bg-white"
                         type="button"
-                        onClick={() => handleClonePrompt(item)}
+                        onClick={() => handleClonePrompt(item).catch(() => undefined)}
                       >
                         <RefreshCw size={14} />
                         {t('home_clone_prompt')}
