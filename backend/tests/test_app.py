@@ -25,6 +25,8 @@ class FakeProvider:
     def __init__(self) -> None:
         self.generated_configs: list[dict[str, Any]] = []
         self.generated_payloads: list[dict[str, Any]] = []
+        self.chat_configs: list[dict[str, Any]] = []
+        self.chat_payloads: list[dict[str, Any]] = []
         self.edited_configs: list[dict[str, Any]] = []
         self.edited_fields: list[dict[str, Any]] = []
         self.edited_images: list[list[tuple[str, bytes, str]]] = []
@@ -41,6 +43,17 @@ class FakeProvider:
         self.generated_configs.append(dict(config))
         self.generated_payloads.append(payload)
         return {"created": 123, "data": [{"b64_json": PNG_B64, "revised_prompt": "revised"}], "usage": {"total_tokens": 1}}
+
+    async def chat_completion(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        if not config.get("api_key"):
+            raise ProviderError(400, "请先在配置页保存 JokoAI API Key")
+        self.chat_configs.append(dict(config))
+        self.chat_payloads.append(payload)
+        return {
+            "id": "chatcmpl-test",
+            "choices": [{"message": {"role": "assistant", "content": "优化后的淘宝机器人主页图提示词"}}],
+            "usage": {"total_tokens": 12},
+        }
 
     async def edit_image(
         self,
@@ -166,6 +179,7 @@ def make_app(tmp_path: Path, auth_client: FakeAuthClient | None = None, provider
         auth_base_url="http://127.0.0.1:9878",
         provider_usage_path="/v1/usage",
         image_model="gpt-image-2",
+        prompt_optimizer_model="gpt-5.5",
         default_size="2K",
         default_quality="auto",
         image_price_1k=0.134,
@@ -219,6 +233,42 @@ def test_guest_config_masks_api_key(tmp_path: Path) -> None:
         assert data["api_key_hint"] == "sk-tes...3456"
         assert data["user_name"] == "Neo"
         assert data["managed_by_auth"] is False
+
+
+def test_prompt_optimizer_uses_current_provider_key(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        response = client.post(
+            "/api/prompts/optimize",
+            json={
+                "prompt": "淘宝机器人主页图",
+                "instruction": "主角改成白色家用机器人，保留电商主图质感",
+                "size": "1088x1088",
+                "aspect_ratio": "1:1",
+                "quality": "medium",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["prompt"] == "优化后的淘宝机器人主页图提示词"
+        assert payload["model"] == "gpt-5.5"
+        assert provider.chat_configs[-1]["api_key"] == "sk-test-123456"
+        chat_payload = provider.chat_payloads[-1]
+        assert chat_payload["model"] == "gpt-5.5"
+        assert chat_payload["messages"][0]["role"] == "system"
+        assert "白色家用机器人" in chat_payload["messages"][1]["content"]
+        assert "比例 1:1" in chat_payload["messages"][1]["content"]
+
+
+def test_prompt_optimizer_requires_api_key(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        response = client.post("/api/prompts/optimize", json={"prompt": "测试提示词"})
+
+        assert response.status_code == 400
+        assert "API Key" in response.json()["detail"]
 
 
 def test_guest_history_is_isolated_by_cookie(tmp_path: Path) -> None:

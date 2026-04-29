@@ -33,6 +33,10 @@ class OpenAICompatibleImageClient:
         response = await self._request(config, "POST", "/images/generations", json=payload)
         return response.json()
 
+    async def chat_completion(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        response = await self._request(config, "POST", "/chat/completions", json=payload)
+        return response.json()
+
     async def edit_image(
         self,
         config: dict[str, Any],

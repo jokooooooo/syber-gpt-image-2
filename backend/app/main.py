@@ -44,6 +44,15 @@ class GenerateRequest(BaseModel):
     output_format: str | None = None
 
 
+class PromptOptimizeRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=12000)
+    instruction: str | None = Field(default=None, max_length=2000)
+    model: str | None = Field(default=None, max_length=120)
+    size: str | None = Field(default=None, max_length=80)
+    aspect_ratio: str | None = Field(default=None, max_length=20)
+    quality: str | None = Field(default=None, max_length=40)
+
+
 SIZE_PRESETS: dict[str, dict[str, str]] = {
     "1K": {
         "1:1": "1088x1088",
@@ -79,6 +88,16 @@ SIZE_TIER_BY_DIMENSION = {
 
 RETRYABLE_PROVIDER_STATUS_CODES = {429, 502, 503, 504}
 IMAGE_PROVIDER_MAX_ATTEMPTS = 3
+PROMPT_OPTIMIZER_SYSTEM_PROMPT = """你是 JokoAI 的图像生成提示词优化器。
+用户会提供一段原始生图提示词，以及可选的修改要求。你的任务是输出一段可以直接用于 gpt-image-2 / OpenAI 兼容生图接口的最终提示词。
+要求：
+1. 只输出最终提示词，不要标题、解释、Markdown、代码块或引号。
+2. 尽量保留原提示词的构图、风格、镜头、场景和关键约束。
+3. 如果用户给出角色、主体、商品、场景或风格替换要求，优先按修改要求替换旧内容。
+4. 补强画面主体、环境、光线、材质、镜头、细节、商业可用性和高质量图像描述。
+5. 避免加入水印、乱码文字、错误品牌标识、低清、畸形手指、额外肢体等负面结果。
+6. 保持原提示词主要语言；中文输入输出中文，英文输入输出英文。
+7. 输出要具体但不要冗长，适合直接复制到生图框。"""
 
 
 class AuthSendVerifyCodeRequest(BaseModel):
@@ -614,6 +633,31 @@ def create_app(
         tasks = db.list_image_tasks(viewer.owner_id, limit=limit, statuses=statuses or None)
         return {"items": [_public_image_task(db, viewer.owner_id, task) for task in tasks]}
 
+    @app.post("/api/prompts/optimize")
+    async def optimize_prompt(
+        request: PromptOptimizeRequest,
+        viewer: ViewerContext = Depends(_viewer),
+        db: Database = Depends(_db),
+        settings: Settings = Depends(_settings),
+        provider: OpenAICompatibleImageClient = Depends(_provider),
+    ) -> dict[str, Any]:
+        config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
+        payload = _prompt_optimizer_payload(request, settings)
+        try:
+            provider_response = await provider.chat_completion(config, payload)
+        except ProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        optimized_prompt = _extract_chat_completion_text(provider_response)
+        if not optimized_prompt:
+            raise HTTPException(status_code=502, detail="Prompt optimizer returned an empty response")
+        return {
+            "prompt": optimized_prompt,
+            "original_prompt": request.prompt,
+            "instruction": request.instruction or "",
+            "model": payload["model"],
+            "usage": provider_response.get("usage") if isinstance(provider_response, dict) else None,
+        }
+
     @app.post("/api/images/generate")
     async def generate_image(
         request: GenerateRequest,
@@ -958,6 +1002,53 @@ def _image_payload(config: dict[str, Any], request: GenerateRequest) -> dict[str
     if request.output_format:
         payload["output_format"] = request.output_format
     return payload
+
+
+def _prompt_optimizer_payload(request: PromptOptimizeRequest, settings: Settings) -> dict[str, Any]:
+    context_lines = [
+        f"原始提示词：\n{request.prompt.strip()}",
+    ]
+    if request.instruction and request.instruction.strip():
+        context_lines.append(f"修改要求：\n{request.instruction.strip()}")
+    output_options = []
+    if request.aspect_ratio:
+        output_options.append(f"比例 {request.aspect_ratio}")
+    if request.size:
+        output_options.append(f"尺寸 {request.size}")
+    if request.quality:
+        output_options.append(f"质量 {request.quality}")
+    if output_options:
+        context_lines.append(f"当前生图参数：{'，'.join(output_options)}")
+    context_lines.append("请返回优化后的最终提示词。")
+    return {
+        "model": (request.model or settings.prompt_optimizer_model).strip(),
+        "messages": [
+            {"role": "system", "content": PROMPT_OPTIMIZER_SYSTEM_PROMPT},
+            {"role": "user", "content": "\n\n".join(context_lines)},
+        ],
+        "temperature": 0.55,
+        "max_tokens": 1800,
+        "stream": False,
+    }
+
+
+def _extract_chat_completion_text(provider_response: dict[str, Any]) -> str:
+    choices = provider_response.get("choices") if isinstance(provider_response, dict) else None
+    if not isinstance(choices, list) or not choices:
+        return ""
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip().strip('"').strip("'").strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(parts).strip().strip('"').strip("'").strip()
+    return ""
 
 
 def _provider_image_size(size: str, aspect_ratio: str | None = None) -> str:

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { ArrowUp, ImagePlus, Grid, List, Maximize2, RefreshCw, Loader2, Search, X } from 'lucide-react';
-import { editImage, generateImage, getConfig, getHistory, getInspirations, HistoryItem, InspirationItem } from '../api';
+import { ArrowUp, ImagePlus, Grid, List, Maximize2, RefreshCw, Loader2, Search, Sparkles, X } from 'lucide-react';
+import { editImage, generateImage, getConfig, getHistory, getInspirations, HistoryItem, InspirationItem, optimizePrompt } from '../api';
 import { useAuth } from '../auth';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
@@ -64,6 +64,7 @@ export default function Home() {
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
   const [promptValue, setPromptValue] = useState('');
+  const [promptInstruction, setPromptInstruction] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [inspirations, setInspirations] = useState<InspirationItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -73,6 +74,7 @@ export default function Home() {
   const [imageQuality, setImageQuality] = useState('auto');
   const [previewItem, setPreviewItem] = useState<{ imageUrl: string; prompt: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [optimizingPrompt, setOptimizingPrompt] = useState(false);
   const [feedLoading, setFeedLoading] = useState(true);
   const [loadingMoreFeed, setLoadingMoreFeed] = useState(false);
   const [hasMoreInspirations, setHasMoreInspirations] = useState(true);
@@ -244,6 +246,33 @@ export default function Home() {
     }
   }
 
+  async function handleOptimizePrompt() {
+    const prompt = promptValue.trim();
+    if (!prompt || optimizingPrompt) {
+      if (!prompt) setError(t('home_prompt_optimizer_empty'));
+      return;
+    }
+    setOptimizingPrompt(true);
+    setError('');
+    setMessage(t('home_optimizing_prompt'));
+    try {
+      const result = await optimizePrompt({
+        prompt,
+        instruction: promptInstruction.trim() || undefined,
+        size: providerImageSize(imageScale, aspectRatio),
+        aspect_ratio: aspectRatio,
+        quality: imageQuality,
+      });
+      setPromptValue(result.prompt);
+      setMessage(t('home_prompt_optimized'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setMessage('');
+    } finally {
+      setOptimizingPrompt(false);
+    }
+  }
+
   const mergedHistory = mergeHistory([
     ...taskHistoryItems.filter((item) => item.status === 'succeeded' && Boolean(item.image_url)),
     ...history,
@@ -284,7 +313,7 @@ export default function Home() {
   };
 
   return (
-    <div className="pt-24 pb-48 px-6 max-w-[1440px] mx-auto min-h-screen bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
+    <div className="pt-24 pb-80 px-6 max-w-[1440px] mx-auto min-h-screen bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
       <div className="flex justify-between items-end mb-8">
         <div className="flex flex-col gap-2">
            <div className="flex items-center gap-2 text-[10px] text-secondary uppercase font-bold tracking-widest">
@@ -464,6 +493,27 @@ export default function Home() {
           />
           <GenerationSelect label={t('home_aspect_ratio')} value={aspectRatio} onChange={handleAspectRatioChange} options={ASPECT_RATIO_OPTIONS} />
           <GenerationSelect label={t('home_quality')} value={imageQuality} onChange={setImageQuality} options={QUALITY_OPTIONS} />
+        </div>
+
+        <div className="mb-4 flex flex-col gap-2 md:flex-row">
+          <label className="flex min-w-0 flex-1 items-center gap-2 border border-primary/20 bg-black px-3 py-2 text-primary focus-within:border-primary">
+            <Sparkles className="shrink-0 text-secondary/80" size={15} />
+            <input
+              className="min-w-0 flex-1 bg-transparent text-xs text-primary outline-none placeholder:text-primary/25"
+              value={promptInstruction}
+              onChange={(event) => setPromptInstruction(event.target.value)}
+              placeholder={t('home_prompt_instruction')}
+            />
+          </label>
+          <button
+            className="flex h-10 shrink-0 items-center justify-center gap-2 border border-secondary/50 bg-secondary/10 px-4 text-xs font-black uppercase tracking-widest text-secondary transition-colors hover:bg-secondary hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={optimizingPrompt || !promptValue.trim()}
+            onClick={handleOptimizePrompt}
+          >
+            {optimizingPrompt ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+            {optimizingPrompt ? t('home_optimizing_prompt') : t('home_optimize_prompt')}
+          </button>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-4">

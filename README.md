@@ -12,6 +12,7 @@ gpt-image-2
 
 - 文生图：调用 sub2api `/v1/images/generations`
 - 改图：调用 sub2api `/v1/images/edits`
+- 提示词优化：调用 sub2api OpenAI 兼容 `/v1/chat/completions`，沿用当前用户的生图 API Key
 - 多参考图改图：改图接口支持上传多张参考图
 - 异步任务：提交后进入任务中心，页面刷新后仍可查看任务状态
 - 历史记录：成功和失败任务都会保存
@@ -61,7 +62,7 @@ deploy/docker-nginx.conf
 image 后端使用两类 sub2api 地址：
 
 ```text
-SUB2API_BASE_URL       OpenAI 兼容接口地址，默认用于生图、改图、余额
+SUB2API_BASE_URL       OpenAI 兼容接口地址，默认用于生图、改图、提示词优化、余额
 SUB2API_AUTH_BASE_URL  sub2api 管理接口地址，默认用于登录、注册、Key、用量明细
 ```
 
@@ -104,6 +105,17 @@ SUB2API_AUTH_BASE_URL=http://127.0.0.1:9878
   -> 图片保存到 backend/storage/images
   -> 历史和账单写入 SQLite
 ```
+
+提示词优化：
+
+```text
+前端 POST /api/prompts/optimize
+  -> FastAPI 读取当前用户/游客配置里的 API Key
+  -> 调用 SUB2API_BASE_URL + /chat/completions
+  -> 返回可直接用于生图的优化后提示词
+```
+
+提示词优化和生图使用同一个 API Key。该 Key 需要在 sub2api 里拥有 `PROMPT_OPTIMIZER_MODEL` 对应文本模型的权限；如果只允许 `gpt-image-2`，优化接口会被上游拒绝。
 
 改图：
 
@@ -216,7 +228,7 @@ docker compose logs --tail=100 backend web
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SUB2API_BASE_URL` | `http://host.docker.internal:9878/v1` | OpenAI 兼容接口地址，生图、改图、余额使用 |
+| `SUB2API_BASE_URL` | `http://host.docker.internal:9878/v1` | OpenAI 兼容接口地址，生图、改图、提示词优化、余额使用 |
 | `SUB2API_AUTH_BASE_URL` | `http://host.docker.internal:9878` | sub2api 管理接口地址，注册、登录、Key、用量明细使用 |
 | `SUB2API_USAGE_PATH` | `/v1/usage` | 余额查询路径 |
 
@@ -234,6 +246,7 @@ docker compose logs --tail=100 backend web
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `IMAGE_MODEL` | `gpt-image-2` | 默认模型 |
+| `PROMPT_OPTIMIZER_MODEL` | `gpt-5.5` | 提示词优化使用的 OpenAI 兼容文本模型 |
 | `IMAGE_SIZE` | `2K` | 默认尺寸档位 |
 | `IMAGE_QUALITY` | `auto` | 默认质量 |
 | `PROVIDER_TIMEOUT_SECONDS` | `300` | 请求 sub2api 的超时时间 |

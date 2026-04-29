@@ -155,6 +155,23 @@ export type GeneratePayload = {
   n?: number;
 };
 
+export type PromptOptimizePayload = {
+  prompt: string;
+  instruction?: string;
+  model?: string;
+  size?: string;
+  aspect_ratio?: string;
+  quality?: string;
+};
+
+export type PromptOptimizeResult = {
+  prompt: string;
+  original_prompt: string;
+  instruction: string;
+  model: string;
+  usage: Record<string, unknown> | null;
+};
+
 export type PublicAuthSettings = {
   registration_enabled: boolean;
   email_verify_enabled: boolean;
@@ -367,6 +384,13 @@ export function generateImage(payload: GeneratePayload) {
   return request<ImageTask>('/api/images/generate', {
     method: 'POST',
     body: JSON.stringify({ n: 1, ...payload }),
+  });
+}
+
+export function optimizePrompt(payload: PromptOptimizePayload) {
+  return request<PromptOptimizeResult>('/api/prompts/optimize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 

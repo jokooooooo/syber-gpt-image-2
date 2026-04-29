@@ -35,6 +35,7 @@ class Settings:
     auth_base_url: str
     provider_usage_path: str
     image_model: str
+    prompt_optimizer_model: str
     default_size: str
     default_quality: str
     image_price_1k: float
@@ -81,6 +82,7 @@ class Settings:
             auth_base_url=os.getenv("SUB2API_AUTH_BASE_URL", _derive_auth_base_url(provider_base_url)).rstrip("/"),
             provider_usage_path=os.getenv("SUB2API_USAGE_PATH", "/v1/usage"),
             image_model=os.getenv("IMAGE_MODEL", "gpt-image-2"),
+            prompt_optimizer_model=os.getenv("PROMPT_OPTIMIZER_MODEL", "gpt-5.5"),
             default_size=os.getenv("IMAGE_SIZE", "2K"),
             default_quality=os.getenv("IMAGE_QUALITY", "auto"),
             image_price_1k=float(os.getenv("IMAGE_PRICE_1K_USD", "0.134")),
