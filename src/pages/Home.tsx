@@ -18,6 +18,7 @@ import { copyTextToClipboard } from '../clipboard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
 import PromptEditorModal from '../components/PromptEditorModal';
+import { useHomeFeed } from '../homeFeed';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
@@ -87,10 +88,9 @@ export default function Home() {
   const { viewer } = useAuth();
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
+  const { state: feedState, patchState, setState: setFeedState } = useHomeFeed();
   const [promptValue, setPromptValue] = useState('');
   const [promptInstruction, setPromptInstruction] = useState('');
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [inspirations, setInspirations] = useState<InspirationItem[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [selectedPreviews, setSelectedPreviews] = useState<{ id: string; name: string; url: string }[]>([]);
   const [imageScale, setImageScale] = useState('2K');
@@ -100,19 +100,23 @@ export default function Home() {
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
-  const [feedLoading, setFeedLoading] = useState(true);
-  const [loadingMoreFeed, setLoadingMoreFeed] = useState(false);
-  const [hasMoreInspirations, setHasMoreInspirations] = useState(true);
-  const [inspirationOffset, setInspirationOffset] = useState(0);
-  const [inspirationTotal, setInspirationTotal] = useState(0);
-  const [inspirationSearchInput, setInspirationSearchInput] = useState('');
-  const [inspirationQuery, setInspirationQuery] = useState('');
   const [favoritePendingIds, setFavoritePendingIds] = useState<string[]>([]);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const {
+    history,
+    inspirations,
+    feedLoading,
+    loadingMoreFeed,
+    hasMoreInspirations,
+    inspirationOffset,
+    inspirationTotal,
+    inspirationSearchInput,
+    inspirationQuery,
+  } = feedState;
 
   useEffect(() => {
     const pendingPrompt = window.sessionStorage.getItem(PROMPT_TRANSFER_KEY);
@@ -156,10 +160,10 @@ export default function Home() {
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      setInspirationQuery(inspirationSearchInput.trim());
+      patchState({ inspirationQuery: inspirationSearchInput.trim() });
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [inspirationSearchInput]);
+  }, [inspirationSearchInput, patchState]);
 
   useEffect(() => {
     const updateBackToTop = () => setShowBackToTop(window.scrollY > 720);
@@ -170,14 +174,23 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    setFeedLoading(true);
-    setLoadingMoreFeed(false);
-    setHasMoreInspirations(true);
-    setInspirationOffset(0);
-    setInspirationTotal(0);
-    setInspirations([]);
+    const ownerId = viewer?.owner_id || '';
     setError('');
     const query = inspirationQuery || undefined;
+    if (feedState.initialized && feedState.loadedOwnerId === ownerId && feedState.loadedQuery === (query || '')) {
+      window.requestAnimationFrame(() => window.scrollTo({ top: feedState.scrollY, behavior: 'auto' }));
+      return () => {
+        cancelled = true;
+      };
+    }
+    patchState({
+      feedLoading: true,
+      loadingMoreFeed: false,
+      hasMoreInspirations: true,
+      inspirationOffset: 0,
+      inspirationTotal: 0,
+      inspirations: [],
+    });
     const task = Promise.all([
       getHistory({ limit: 12 }),
       getInspirations({ limit: FEED_PAGE_SIZE, offset: 0, q: query }),
@@ -185,12 +198,17 @@ export default function Home() {
     task
       .then(([historyData, inspirationData]) => {
         if (cancelled) return;
-        setHistory(historyData.items.filter((item) => item.status === 'succeeded' && Boolean(item.image_url)));
-        setInspirations(inspirationData.items);
         const nextTotal = Number(inspirationData.total ?? inspirationData.items.length ?? 0);
-        setInspirationTotal(nextTotal);
-        setInspirationOffset(inspirationData.items.length);
-        setHasMoreInspirations(inspirationData.items.length < nextTotal);
+        patchState({
+          history: historyData.items.filter((item) => item.status === 'succeeded' && Boolean(item.image_url)),
+          inspirations: inspirationData.items,
+          inspirationTotal: nextTotal,
+          inspirationOffset: inspirationData.items.length,
+          hasMoreInspirations: inspirationData.items.length < nextTotal,
+          loadedOwnerId: ownerId,
+          loadedQuery: query || '',
+          initialized: true,
+        });
       })
       .catch((err) => {
         if (!cancelled) {
@@ -199,41 +217,44 @@ export default function Home() {
       })
       .finally(() => {
         if (!cancelled) {
-          setFeedLoading(false);
+          patchState({ feedLoading: false });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [inspirationQuery, viewer?.owner_id]);
+  }, [feedState.initialized, feedState.loadedOwnerId, feedState.loadedQuery, feedState.scrollY, inspirationQuery, patchState, viewer?.owner_id]);
 
   const loadMoreInspirations = useCallback(async () => {
     if (feedLoading || loadingMoreFeed || !hasMoreInspirations) {
       return;
     }
-    setLoadingMoreFeed(true);
+    patchState({ loadingMoreFeed: true });
     try {
       const data = await getInspirations({
         limit: FEED_PAGE_SIZE,
         offset: inspirationOffset,
         q: inspirationQuery || undefined,
       });
-      setInspirations((current) => {
-        const seen = new Set(current.map((item) => item.id));
+      setFeedState((current) => {
+        const seen = new Set(current.inspirations.map((item) => item.id));
         const nextItems = data.items.filter((item) => !seen.has(item.id));
-        return [...current, ...nextItems];
+        const nextOffset = inspirationOffset + data.items.length;
+        const nextTotal = Number(data.total ?? inspirationTotal);
+        return {
+          ...current,
+          inspirations: [...current.inspirations, ...nextItems],
+          inspirationTotal: nextTotal,
+          inspirationOffset: nextOffset,
+          hasMoreInspirations: nextTotal > 0 ? nextOffset < nextTotal : data.items.length === FEED_PAGE_SIZE,
+        };
       });
-      const nextOffset = inspirationOffset + data.items.length;
-      const nextTotal = Number(data.total ?? inspirationTotal);
-      setInspirationTotal(nextTotal);
-      setInspirationOffset(nextOffset);
-      setHasMoreInspirations(nextTotal > 0 ? nextOffset < nextTotal : data.items.length === FEED_PAGE_SIZE);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingMoreFeed(false);
+      patchState({ loadingMoreFeed: false });
     }
-  }, [feedLoading, hasMoreInspirations, inspirationOffset, inspirationQuery, inspirationTotal, loadingMoreFeed]);
+  }, [feedLoading, hasMoreInspirations, inspirationOffset, inspirationQuery, inspirationTotal, loadingMoreFeed, patchState, setFeedState]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -251,6 +272,25 @@ export default function Home() {
     observer.observe(target);
     return () => observer.disconnect();
   }, [feedLoading, hasMoreInspirations, loadMoreInspirations, loadingMoreFeed]);
+
+  useEffect(() => {
+    let ticking = false;
+    const initialScrollY = feedState.scrollY;
+    const saveScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        patchState({ scrollY: window.scrollY });
+        ticking = false;
+      });
+    };
+    window.addEventListener('scroll', saveScroll, { passive: true });
+    window.requestAnimationFrame(() => window.scrollTo({ top: initialScrollY, behavior: 'auto' }));
+    return () => {
+      window.removeEventListener('scroll', saveScroll);
+      patchState({ scrollY: window.scrollY });
+    };
+  }, [patchState]);
 
   async function handleExecute() {
     const prompt = promptValue.trim();
@@ -319,7 +359,10 @@ export default function Home() {
       const result = item.favorited
         ? await unfavoriteInspiration(item.inspirationId)
         : await favoriteInspiration(item.inspirationId);
-      setInspirations((current) => current.map((inspiration) => (inspiration.id === result.item.id ? result.item : inspiration)));
+      setFeedState((current) => ({
+        ...current,
+        inspirations: current.inspirations.map((inspiration) => (inspiration.id === result.item.id ? result.item : inspiration)),
+      }));
       setMessage(result.item.favorited ? t('home_favorite_saved') : t('home_favorite_removed'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -417,7 +460,7 @@ export default function Home() {
           <input
             className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
             value={inspirationSearchInput}
-            onChange={(event) => setInspirationSearchInput(event.target.value)}
+            onChange={(event) => patchState({ inspirationSearchInput: event.target.value })}
             placeholder={t('home_case_search')}
           />
           {inspirationSearchInput ? (
@@ -427,8 +470,7 @@ export default function Home() {
               title={t('home_case_clear_search')}
               aria-label={t('home_case_clear_search')}
               onClick={() => {
-                setInspirationSearchInput('');
-                setInspirationQuery('');
+                patchState({ inspirationSearchInput: '', inspirationQuery: '' });
               }}
             >
               <X size={15} />

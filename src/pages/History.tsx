@@ -54,6 +54,9 @@ export default function History() {
     setError('');
     try {
       const data = await getHistory({ limit: 24, offset: nextOffset, q: query });
+      if (!append) {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
       setItems((current) => (append ? [...current, ...data.items] : data.items));
       if (!append) {
         setRemovedIds([]);
