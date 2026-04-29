@@ -2,6 +2,7 @@ import { CheckCircle2, Clock3, ImageIcon, Loader2, X, XCircle } from 'lucide-rea
 import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { formatDate } from '../api';
+import ImagePreviewModal from './ImagePreviewModal';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
@@ -25,6 +26,7 @@ export default function TaskDrawer() {
   const { t } = useSite();
   const { tasks, drawerOpen, closeDrawer, activeCount } = useTasks();
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [previewItem, setPreviewItem] = useState<{ imageUrl: string; prompt: string } | null>(null);
 
   const visibleTasks = useMemo(() => {
     if (filter === 'all') {
@@ -131,7 +133,14 @@ export default function TaskDrawer() {
                       <div className="flex gap-3">
                         <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden border border-white/10 bg-black/40">
                           {previewImage ? (
-                            <img alt={task.prompt} className="h-full w-full object-contain" src={previewImage} />
+                            <button
+                              className="h-full w-full cursor-zoom-in bg-black/40"
+                              type="button"
+                              title={t('history_preview')}
+                              onClick={() => setPreviewItem({ imageUrl: previewImage, prompt: task.prompt })}
+                            >
+                              <img alt={task.prompt} className="h-full w-full object-contain" src={previewImage} />
+                            </button>
                           ) : (
                             <ImageIcon size={18} className="text-white/25" />
                           )}
@@ -155,6 +164,12 @@ export default function TaskDrawer() {
           </div>
         </div>
       </aside>
+      <ImagePreviewModal
+        imageUrl={previewItem?.imageUrl || null}
+        alt={previewItem?.prompt || 'preview'}
+        subtitle={previewItem?.prompt}
+        onClose={() => setPreviewItem(null)}
+      />
     </>
   );
 }

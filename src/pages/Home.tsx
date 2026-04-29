@@ -313,7 +313,7 @@ export default function Home() {
   };
 
   return (
-    <div className="pt-24 pb-80 px-6 max-w-[1440px] mx-auto min-h-screen bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
+    <div className="pt-24 pb-[19rem] px-4 sm:pb-56 sm:px-6 max-w-[1440px] mx-auto min-h-screen bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
       <div className="flex justify-between items-end mb-8">
         <div className="flex flex-col gap-2">
            <div className="flex items-center gap-2 text-[10px] text-secondary uppercase font-bold tracking-widest">
@@ -466,10 +466,11 @@ export default function Home() {
         </div>
       )}
 
-      <div className="fixed bottom-6 left-6 right-6 md:left-auto md:right-auto md:w-[calc(100%-3rem)] max-w-[960px] mx-auto bg-surface-container/90 backdrop-blur-xl border border-primary/40 p-5 rounded-sm shadow-[0_-20px_40px_rgba(0,0,0,0.8)] z-50 font-mono">
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex items-center gap-2 text-[10px] text-white/50 border-r border-white/10 pr-4">
-             <span className="w-2 h-2 bg-secondary rounded-full animate-pulse"></span> {t('home_mode')}: {selectedFiles.length ? t('home_mode_edit') : t('home_mode_generate')}
+      <div className="fixed bottom-3 left-3 right-3 z-50 mx-auto max-w-[1080px] rounded-sm border border-primary/40 bg-surface-container/90 p-3 font-mono shadow-[0_-20px_40px_rgba(0,0,0,0.75)] backdrop-blur-xl md:bottom-5 md:p-4">
+        <div className="mb-2 flex min-w-0 items-center gap-3">
+          <div className="flex shrink-0 items-center gap-2 border-r border-white/10 pr-3 text-[10px] text-white/50">
+            <span className="h-2 w-2 rounded-full bg-secondary" />
+            {t('home_mode')}: {selectedFiles.length ? t('home_mode_edit') : t('home_mode_generate')}
           </div>
           <div className="hidden items-center gap-2 text-[10px] uppercase tracking-widest text-white/45 md:flex">
             <span>{SIZE_LABELS[imageScale] || imageScale}</span>
@@ -477,12 +478,12 @@ export default function Home() {
             <span>{providerImageSize(imageScale, aspectRatio)}</span>
             <span>{imageQuality}</span>
           </div>
-          <div className="text-[10px] text-primary uppercase tracking-widest truncate">
+          <div className="min-w-0 flex-1 truncate text-[10px] uppercase tracking-widest text-primary">
             {message || (promptValue ? t('home_message_loaded') : t('home_message_waiting'))}
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-3 gap-2">
+        <div className="mb-2 grid grid-cols-3 gap-2 lg:grid-cols-[128px_112px_104px_1fr_auto]">
           <GenerationSelect
             label={t('home_size')}
             value={imageScale}
@@ -493,95 +494,95 @@ export default function Home() {
           />
           <GenerationSelect label={t('home_aspect_ratio')} value={aspectRatio} onChange={handleAspectRatioChange} options={ASPECT_RATIO_OPTIONS} />
           <GenerationSelect label={t('home_quality')} value={imageQuality} onChange={setImageQuality} options={QUALITY_OPTIONS} />
+          <div className="col-span-3 flex min-w-0 gap-2 lg:col-span-2">
+            <label className="flex h-9 min-w-0 flex-1 items-center gap-2 border border-primary/20 bg-black px-3 text-primary focus-within:border-primary">
+              <Sparkles className="shrink-0 text-secondary/80" size={14} />
+              <input
+                className="min-w-0 flex-1 bg-transparent text-xs text-primary outline-none placeholder:text-primary/25"
+                value={promptInstruction}
+                onChange={(event) => setPromptInstruction(event.target.value)}
+                placeholder={t('home_prompt_instruction')}
+              />
+            </label>
+            <button
+              className="flex h-9 shrink-0 items-center justify-center gap-2 border border-secondary/50 bg-secondary/10 px-3 text-[11px] font-black uppercase tracking-widest text-secondary transition-colors hover:bg-secondary hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={optimizingPrompt || !promptValue.trim()}
+              onClick={handleOptimizePrompt}
+            >
+              {optimizingPrompt ? <Loader2 className="animate-spin" size={13} /> : <Sparkles size={13} />}
+              <span className="hidden sm:inline">{optimizingPrompt ? t('home_optimizing_prompt') : t('home_optimize_prompt')}</span>
+              <span className="sm:hidden">AI</span>
+            </button>
+          </div>
         </div>
 
-        <div className="mb-4 flex flex-col gap-2 md:flex-row">
-          <label className="flex min-w-0 flex-1 items-center gap-2 border border-primary/20 bg-black px-3 py-2 text-primary focus-within:border-primary">
-            <Sparkles className="shrink-0 text-secondary/80" size={15} />
-            <input
-              className="min-w-0 flex-1 bg-transparent text-xs text-primary outline-none placeholder:text-primary/25"
-              value={promptInstruction}
-              onChange={(event) => setPromptInstruction(event.target.value)}
-              placeholder={t('home_prompt_instruction')}
-            />
-          </label>
-          <button
-            className="flex h-10 shrink-0 items-center justify-center gap-2 border border-secondary/50 bg-secondary/10 px-4 text-xs font-black uppercase tracking-widest text-secondary transition-colors hover:bg-secondary hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
-            type="button"
-            disabled={optimizingPrompt || !promptValue.trim()}
-            onClick={handleOptimizePrompt}
-          >
-            {optimizingPrompt ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-            {optimizingPrompt ? t('home_optimizing_prompt') : t('home_optimize_prompt')}
-          </button>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 flex flex-col gap-2 relative">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+          <div className="min-w-0">
             <textarea
               value={promptValue}
               onChange={(e) => setPromptValue(e.target.value)}
-              className="w-full h-20 bg-black border border-primary/20 p-3 text-sm text-primary focus:outline-none focus:border-primary placeholder:text-primary/20 resize-none shadow-inner"
+              className="h-16 w-full resize-none border border-primary/20 bg-black p-2.5 text-sm text-primary shadow-inner focus:border-primary focus:outline-none placeholder:text-primary/20 md:h-20 md:p-3"
               placeholder={t('home_placeholder')}
             ></textarea>
-            <div className="absolute top-0 right-0 p-2 text-[8px] text-primary/40 uppercase">
+            <div className="mt-1 flex justify-end text-[8px] uppercase leading-none text-primary/40">
               UTF-8 // AI-GEN // [{promptValue.length}/8000]
             </div>
           </div>
 
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
-            <div className="flex min-w-0 gap-3">
-              <input
-                ref={fileInputRef}
-                className="hidden"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                multiple
-                onChange={handleReferenceImages}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="h-20 w-20 shrink-0 cursor-pointer border border-dashed border-primary/20 flex flex-col items-center justify-center hover:bg-primary/5 transition-colors group relative md:w-24"
-              >
-                <ImagePlus className="w-6 h-6 mb-1 text-white/30 group-hover:text-primary transition-colors" />
-                <span className="max-w-full truncate px-1 text-[9px] uppercase text-white/40 group-hover:text-primary">{t('home_ref_image')}</span>
-              </button>
-              {selectedPreviews.length > 0 && (
-                <div className="flex min-w-0 max-w-[calc(100vw-11rem)] gap-2 overflow-x-auto pb-1 pr-1 sm:max-w-64">
-                  {selectedPreviews.map((preview, index) => (
-                    <div key={preview.id} className="group/reference relative h-20 w-16 shrink-0 overflow-hidden border border-primary/20 bg-black">
-                      <button
-                        type="button"
-                        className="h-full w-full cursor-zoom-in bg-black"
-                        title={preview.name}
-                        onClick={() => setPreviewItem({ imageUrl: preview.url, prompt: preview.name })}
-                      >
-                        <img alt={preview.name} className="h-full w-full object-cover" src={preview.url} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t('modal_close')}
-                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center border border-white/15 bg-black/70 text-white/80 opacity-100 transition-colors hover:border-error hover:text-error sm:opacity-0 sm:group-hover/reference:opacity-100"
-                        onClick={() => removeReferenceImage(index)}
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="flex min-w-0 gap-2 sm:shrink-0">
+            <input
+              ref={fileInputRef}
+              className="hidden"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              onChange={handleReferenceImages}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="group relative flex h-12 w-14 shrink-0 cursor-pointer flex-col items-center justify-center border border-dashed border-primary/20 transition-colors hover:bg-primary/5 sm:h-16 md:h-20 md:w-16"
+              title={t('home_ref_image')}
+            >
+              <ImagePlus className="mb-1 h-5 w-5 text-white/30 transition-colors group-hover:text-primary" />
+              <span className="max-w-full truncate px-1 text-[8px] uppercase text-white/40 group-hover:text-primary">{t('home_ref_image')}</span>
+            </button>
             <button
               onClick={handleExecute}
               disabled={loading || !promptValue.trim()}
-              className="h-20 w-full bg-primary text-black font-black flex flex-col items-center justify-center hover:scale-95 transition-transform shadow-[0_0_15px_rgba(0,243,255,0.4)] disabled:opacity-40 disabled:hover:scale-100 sm:w-32"
+              className="flex h-12 min-w-0 flex-1 flex-col items-center justify-center bg-primary text-black font-black shadow-[0_0_15px_rgba(0,243,255,0.4)] transition-transform hover:scale-95 disabled:opacity-40 disabled:hover:scale-100 sm:h-16 sm:w-20 sm:flex-none md:h-20 md:w-28"
             >
-              {loading ? <Loader2 className="animate-spin" size={24} /> : <span className="text-xl mb-[-4px]">{t('home_execute')}</span>}
-              <span className="text-[10px] opacity-70 italic">{selectedFiles.length ? t('home_edit') : t('home_generate')}</span>
+              {loading ? <Loader2 className="animate-spin" size={22} /> : <span className="mb-[-4px] text-lg md:text-xl">{t('home_execute')}</span>}
+              <span className="text-[9px] italic opacity-70 md:text-[10px]">{selectedFiles.length ? t('home_edit') : t('home_generate')}</span>
             </button>
           </div>
         </div>
+
+        {selectedPreviews.length > 0 && (
+          <div className="mt-2 flex max-w-full gap-2 overflow-x-auto pb-1">
+            {selectedPreviews.map((preview, index) => (
+              <div key={preview.id} className="group/reference relative h-14 w-12 shrink-0 overflow-hidden border border-primary/20 bg-black">
+                <button
+                  type="button"
+                  className="h-full w-full cursor-zoom-in bg-black"
+                  title={preview.name}
+                  onClick={() => setPreviewItem({ imageUrl: preview.url, prompt: preview.name })}
+                >
+                  <img alt={preview.name} className="h-full w-full object-cover" src={preview.url} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t('modal_close')}
+                  className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center border border-white/15 bg-black/70 text-white/80 opacity-100 transition-colors hover:border-error hover:text-error sm:opacity-0 sm:group-hover/reference:opacity-100"
+                  onClick={() => removeReferenceImage(index)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <ImagePreviewModal
@@ -622,9 +623,9 @@ function GenerationSelect({
 }) {
   return (
     <label className="min-w-0">
-      <span className="mb-1 block truncate text-[9px] uppercase tracking-[0.2em] text-white/40">{label}</span>
+      <span className="mb-0.5 block truncate text-[8px] uppercase tracking-[0.18em] text-white/40">{label}</span>
       <select
-        className="h-10 w-full border border-primary/20 bg-black px-2 text-xs uppercase text-primary outline-none transition-colors focus:border-primary"
+        className="h-8 w-full border border-primary/20 bg-black px-2 text-xs uppercase text-primary outline-none transition-colors focus:border-primary"
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >

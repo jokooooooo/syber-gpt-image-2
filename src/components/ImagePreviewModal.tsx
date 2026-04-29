@@ -16,7 +16,7 @@ export default function ImagePreviewModal({ imageUrl, alt, subtitle, onClose }: 
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 px-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[220] flex items-center justify-center bg-black/85 px-4 backdrop-blur-sm" onClick={onClose}>
       <div
         className="w-full max-w-6xl border border-primary/30 bg-surface-container-high shadow-[0_0_40px_rgba(0,243,255,0.18)]"
         onClick={(event) => event.stopPropagation()}
