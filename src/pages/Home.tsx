@@ -25,6 +25,7 @@ import { useTasks } from '../tasks';
 const FEED_PAGE_SIZE = 24;
 const PROMPT_TRANSFER_KEY = 'joko_pending_prompt';
 const SIZE_OPTIONS = ['1K', '2K', '4K'];
+const IMAGE_COUNT_OPTIONS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const SIZE_LABELS: Record<string, string> = {
   '1K': '1K (1080p)',
   '2K': '2K (1440p)',
@@ -74,10 +75,52 @@ function mergeHistory(items: HistoryItem[]) {
   return [...merged.values()].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
+function groupHistoryForFeed(items: HistoryItem[]): FeedItem[] {
+  const groups = new Map<string, HistoryItem[]>();
+  const order: string[] = [];
+  for (const item of items) {
+    const key = item.task_id || item.id;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key)!.push(item);
+  }
+
+  return order
+    .map((key) => {
+      const group = groups.get(key) || [];
+      const sorted = [...group].sort((a, b) => {
+        const batchDelta = (a.batch_index || 0) - (b.batch_index || 0);
+        if (batchDelta !== 0) return batchDelta;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      });
+      const images = sorted
+        .filter((item) => item.image_url)
+        .map((item) => ({ id: item.id, url: item.image_url || '', prompt: item.prompt }));
+      const first = sorted[0];
+      if (!first || images.length === 0) {
+        return null;
+      }
+      return {
+        key: `history-${key}`,
+        id: `ID:${first.id.slice(0, 4).toUpperCase()}`,
+        img: images[0].url,
+        images,
+        prompt: first.prompt,
+        title: images.length > 1 ? `${first.mode.toUpperCase()} BATCH` : first.mode.toUpperCase(),
+        inspirationId: null,
+        favorited: false,
+      };
+    })
+    .filter((item): item is FeedItem => Boolean(item));
+}
+
 type FeedItem = {
   key: string;
   id: string;
   img: string;
+  images: { id: string; url: string; prompt: string }[];
   prompt: string;
   title: string;
   inspirationId: string | null;
@@ -96,6 +139,7 @@ export default function Home() {
   const [imageScale, setImageScale] = useState('2K');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageQuality, setImageQuality] = useState('auto');
+  const [imageCount, setImageCount] = useState('1');
   const [previewItem, setPreviewItem] = useState<{ imageUrl: string; prompt: string } | null>(null);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -292,6 +336,7 @@ export default function Home() {
     setError('');
     const isEditMode = selectedFiles.length > 0;
     setMessage(isEditMode ? t('home_message_edit_sent') : t('home_message_generate_sent'));
+    const requestedImageCount = Math.max(1, Math.min(9, Number(imageCount) || 1));
     const imageOptions = {
       size: providerImageSize(imageScale, aspectRatio),
       aspect_ratio: aspectRatio,
@@ -299,8 +344,8 @@ export default function Home() {
     };
     try {
       const submittedTask = isEditMode
-        ? await editImage({ prompt, ...imageOptions }, selectedFiles)
-        : await generateImage({ prompt, ...imageOptions });
+        ? await editImage({ prompt, ...imageOptions, n: requestedImageCount }, selectedFiles)
+        : await generateImage({ prompt, ...imageOptions, n: requestedImageCount });
       addTask(submittedTask);
       openDrawer();
       setMessage(submittedTask.status === 'running' ? t('home_message_processing') : t('home_message_queued'));
@@ -383,19 +428,12 @@ export default function Home() {
     ...history,
   ]);
 
-  const generatedFeed: FeedItem[] = mergedHistory.map((item) => ({
-    key: `history-${item.id}`,
-    id: `ID:${item.id.slice(0, 4).toUpperCase()}`,
-    img: item.image_url || '',
-    prompt: item.prompt,
-    title: item.mode.toUpperCase(),
-    inspirationId: null,
-    favorited: false,
-  }));
+  const generatedFeed: FeedItem[] = groupHistoryForFeed(mergedHistory);
   const inspirationFeed: FeedItem[] = inspirations.map((item) => ({
     key: `case-${item.id}`,
     id: item.author || item.section,
     img: item.image_url || '',
+    images: item.image_url ? [{ id: item.id, url: item.image_url, prompt: item.prompt }] : [],
     prompt: item.prompt,
     title: item.title,
     inspirationId: item.id,
@@ -530,31 +568,56 @@ export default function Home() {
             renderItem={(item) => {
               const canFavorite = Boolean(viewer?.authenticated && item.inspirationId);
               const favoritePending = item.inspirationId ? favoritePendingIds.includes(item.inspirationId) : false;
+              const images = item.images.length > 0 ? item.images : [{ id: item.id, url: item.img, prompt: item.prompt }];
+              const isBatch = images.length > 1;
               return (
                 <div className="overflow-hidden border border-primary/30 bg-black">
-                  <button
-                    className="block w-full cursor-zoom-in bg-black text-left"
-                    type="button"
-                    onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
-                  >
-                    <img
-                      alt={item.id}
-                      className="block h-auto w-full opacity-95 transition-opacity duration-300 hover:opacity-100"
-                      loading="lazy"
-                      src={item.img}
-                    />
-                  </button>
+                  {isBatch ? (
+                    <div className="grid grid-cols-3 gap-1 bg-black p-1">
+                      {images.map((image, index) => (
+                        <button
+                          key={image.id}
+                          className="relative aspect-square cursor-zoom-in overflow-hidden bg-black text-left"
+                          type="button"
+                          onClick={() => setPreviewItem({ imageUrl: image.url, prompt: image.prompt })}
+                        >
+                          <img
+                            alt={`${item.id}-${index + 1}`}
+                            className="h-full w-full object-cover opacity-95 transition-opacity duration-300 hover:opacity-100"
+                            loading="lazy"
+                            src={image.url}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <button
+                      className="block w-full cursor-zoom-in bg-black text-left"
+                      type="button"
+                      onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
+                    >
+                      <img
+                        alt={item.id}
+                        className="block h-auto w-full opacity-95 transition-opacity duration-300 hover:opacity-100"
+                        loading="lazy"
+                        src={item.img}
+                      />
+                    </button>
+                  )}
                   <div className="border-t border-primary/15 bg-surface-container-low/80 p-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <div className="min-w-0 truncate text-[10px] uppercase tracking-widest text-secondary">{item.title}</div>
-                      <div className="shrink-0 font-code-data text-[10px] text-white/25">{item.id}</div>
+                      <div className="shrink-0 font-code-data text-[10px] text-white/25">
+                        {item.id}
+                        {isBatch ? ` x${images.length}` : ''}
+                      </div>
                     </div>
                     <p className="mb-3 line-clamp-3 text-sm text-white/80">{item.prompt}</p>
                     <div className={`grid gap-2 ${canFavorite ? 'grid-cols-[44px_44px_1fr]' : 'grid-cols-[44px_1fr]'}`}>
                       <button
                         className="flex h-10 items-center justify-center border border-white/10 bg-white/5 text-white/70 transition-all duration-300 hover:border-primary hover:text-primary"
                         type="button"
-                        onClick={() => setPreviewItem({ imageUrl: item.img, prompt: item.prompt })}
+                        onClick={() => setPreviewItem({ imageUrl: images[0]?.url || item.img, prompt: item.prompt })}
                         title={t('history_preview')}
                       >
                         <Maximize2 size={15} />
@@ -645,7 +708,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-2 grid grid-cols-3 items-end gap-2 lg:grid-cols-[128px_112px_104px_1fr_auto]">
+        <div className="mb-2 grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-[128px_112px_104px_84px_1fr_auto]">
           <GenerationSelect
             label={t('home_size')}
             value={imageScale}
@@ -656,7 +719,13 @@ export default function Home() {
           />
           <GenerationSelect label={t('home_aspect_ratio')} value={aspectRatio} onChange={handleAspectRatioChange} options={ASPECT_RATIO_OPTIONS} />
           <GenerationSelect label={t('home_quality')} value={imageQuality} onChange={setImageQuality} options={QUALITY_OPTIONS} />
-          <div className="col-span-3 flex min-w-0 gap-2 lg:col-span-2">
+          <GenerationSelect
+            label={t('home_image_count')}
+            value={imageCount}
+            onChange={setImageCount}
+            options={IMAGE_COUNT_OPTIONS}
+          />
+          <div className="col-span-2 flex min-w-0 gap-2 sm:col-span-4 lg:col-span-2">
             <label className="flex h-9 min-w-0 flex-1 items-center gap-2 border border-primary/20 bg-black px-3 text-primary focus-within:border-primary">
               <Sparkles className="shrink-0 text-secondary/80" size={14} />
               <input
@@ -791,6 +860,7 @@ function GenerationSelect({
   onChange,
   isOptionDisabled,
   getOptionLabel,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -798,6 +868,7 @@ function GenerationSelect({
   onChange: (value: string) => void;
   isOptionDisabled?: (value: string) => boolean;
   getOptionLabel?: (value: string) => string;
+  disabled?: boolean;
 }) {
   return (
     <label className="min-w-0">
@@ -805,6 +876,7 @@ function GenerationSelect({
       <select
         className="h-9 w-full border border-primary/20 bg-black px-2 text-xs uppercase text-primary outline-none transition-colors focus:border-primary"
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       >
         {options.map((option) => (

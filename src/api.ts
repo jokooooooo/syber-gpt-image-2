@@ -30,6 +30,8 @@ export type AppConfig = {
 export type HistoryItem = {
   id: string;
   owner_id: string;
+  task_id: string | null;
+  batch_index: number;
   mode: 'generate' | 'edit';
   prompt: string;
   model: string;
@@ -403,7 +405,7 @@ export function unpublishHistory(id: string) {
 export function generateImage(payload: GeneratePayload) {
   return request<ImageTask>('/api/images/generate', {
     method: 'POST',
-    body: JSON.stringify({ n: 1, ...payload }),
+    body: JSON.stringify({ ...payload, n: payload.n || 1 }),
   });
 }
 

@@ -82,6 +82,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS image_history (
                     id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL DEFAULT 'legacy:default',
+                    task_id TEXT,
+                    batch_index INTEGER NOT NULL DEFAULT 0,
                     mode TEXT NOT NULL CHECK (mode IN ('generate', 'edit')),
                     prompt TEXT NOT NULL,
                     model TEXT NOT NULL,
@@ -205,6 +207,7 @@ class Database:
             conn.executescript(
                 """
                 CREATE INDEX IF NOT EXISTS idx_image_history_owner_created_at ON image_history(owner_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_image_history_owner_task_id ON image_history(owner_id, task_id);
                 CREATE INDEX IF NOT EXISTS idx_ledger_entries_owner_created_at ON ledger_entries(owner_id, created_at DESC);
                 """
             )
@@ -229,6 +232,10 @@ class Database:
             )
         if image_columns and "aspect_ratio" not in image_columns:
             conn.execute("ALTER TABLE image_history ADD COLUMN aspect_ratio TEXT NOT NULL DEFAULT ''")
+        if image_columns and "task_id" not in image_columns:
+            conn.execute("ALTER TABLE image_history ADD COLUMN task_id TEXT")
+        if image_columns and "batch_index" not in image_columns:
+            conn.execute("ALTER TABLE image_history ADD COLUMN batch_index INTEGER NOT NULL DEFAULT 0")
 
         task_columns = _table_columns(conn, "image_tasks")
         if task_columns and "aspect_ratio" not in task_columns:
@@ -551,6 +558,8 @@ class Database:
         record = {
             "id": payload.get("id") or uuid4().hex,
             "owner_id": owner_id,
+            "task_id": payload.get("task_id"),
+            "batch_index": int(payload.get("batch_index") or 0),
             "mode": payload["mode"],
             "prompt": payload["prompt"],
             "model": payload["model"],
@@ -573,12 +582,12 @@ class Database:
             conn.execute(
                 """
                 INSERT INTO image_history (
-                    id, owner_id, mode, prompt, model, size, aspect_ratio, quality, status, image_url, image_path,
+                    id, owner_id, task_id, batch_index, mode, prompt, model, size, aspect_ratio, quality, status, image_url, image_path,
                     input_image_url, input_image_path, revised_prompt, usage_json,
                     provider_response_json, error, created_at, updated_at
                 )
                 VALUES (
-                    :id, :owner_id, :mode, :prompt, :model, :size, :aspect_ratio, :quality, :status, :image_url,
+                    :id, :owner_id, :task_id, :batch_index, :mode, :prompt, :model, :size, :aspect_ratio, :quality, :status, :image_url,
                     :image_path, :input_image_url, :input_image_path, :revised_prompt,
                     :usage_json, :provider_response_json, :error, :created_at, :updated_at
                 )
@@ -614,7 +623,7 @@ class Database:
                     LEFT JOIN inspiration_prompts p
                         ON p.source_url = ? AND p.source_item_id = h.id
                     WHERE h.owner_id = ? AND lower(h.prompt) LIKE ?
-                    ORDER BY h.created_at DESC
+                    ORDER BY h.created_at DESC, h.batch_index ASC, h.id DESC
                     LIMIT ? OFFSET ?
                     """,
                     (USER_GALLERY_SOURCE_URL, owner_id, search, limit, offset),
@@ -627,7 +636,7 @@ class Database:
                     LEFT JOIN inspiration_prompts p
                         ON p.source_url = ? AND p.source_item_id = h.id
                     WHERE h.owner_id = ?
-                    ORDER BY h.created_at DESC
+                    ORDER BY h.created_at DESC, h.batch_index ASC, h.id DESC
                     LIMIT ? OFFSET ?
                     """,
                     (USER_GALLERY_SOURCE_URL, owner_id, limit, offset),

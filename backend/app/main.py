@@ -39,7 +39,7 @@ class GenerateRequest(BaseModel):
     size: str | None = None
     aspect_ratio: str | None = None
     quality: str | None = None
-    n: int = Field(default=1, ge=1, le=4)
+    n: int = Field(default=1, ge=1, le=9)
     background: str | None = None
     output_format: str | None = None
 
@@ -98,6 +98,19 @@ PROMPT_OPTIMIZER_SYSTEM_PROMPT = """你是 JokoAI 的图像生成提示词优化
 5. 避免加入水印、乱码文字、错误品牌标识、低清、畸形手指、额外肢体等负面结果。
 6. 保持原提示词主要语言；中文输入输出中文，英文输入输出英文。
 7. 输出要具体但不要冗长，适合直接复制到生图框。"""
+
+SERIES_PROMPT_PLANNER_SYSTEM_PROMPT = """你是 JokoAI 的系列图像提示词规划师。
+用户会提供一个总需求、生成模式、图片张数和画面参数。你的任务是把总需求拆解成一组同风格、同产品、可连续浏览的系列图像提示词。
+要求：
+1. 只输出 JSON，不要 Markdown、解释或代码块。
+2. JSON 格式必须是：{"style_guide":"...", "items":[{"index":1,"title":"...","copy":"...","prompt":"..."}]}。
+3. items 数量必须等于用户要求的图片张数，index 从 1 开始连续。
+4. 每个 prompt 都必须可以独立用于 gpt-image-2 生图/改图接口。
+5. 每个 prompt 都要包含统一风格约束：同一产品、同一色调、同一字体样式、同一标题/正文排版、同一电商详情页视觉系统。
+6. 如果是电商详情页、海报组、主图/副图、故事分镜等需求，要自动拆成不同页面/屏幕/模块，不要重复同一张图。
+7. 如果是改图模式，prompt 必须明确要求严格参考上传图片中的主体、材质、结构和外观，只改变本屏需要表达的场景、文案和布局。
+8. 画面中文字必须简洁、清晰、可读，避免乱码；标题和说明文案由你在 copy 字段中给出，并写入对应 prompt。
+9. 保持原提示词主要语言；中文输入输出中文，英文输入输出英文。"""
 
 
 class AuthSendVerifyCodeRequest(BaseModel):
@@ -754,7 +767,7 @@ def create_app(
         size: Annotated[str | None, Form()] = None,
         aspect_ratio: Annotated[str | None, Form()] = None,
         quality: Annotated[str | None, Form()] = None,
-        n: Annotated[int, Form(ge=1, le=4)] = 1,
+        n: Annotated[int, Form(ge=1, le=9)] = 1,
         viewer: ViewerContext = Depends(_viewer),
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
@@ -1098,6 +1111,45 @@ def _prompt_optimizer_payload(request: PromptOptimizeRequest, settings: Settings
     }
 
 
+def _series_prompt_planner_payload(
+    *,
+    prompt: str,
+    mode: str,
+    image_count: int,
+    model: str,
+    size: str,
+    aspect_ratio: str,
+    quality: str,
+    settings: Settings,
+) -> dict[str, Any]:
+    context = {
+        "mode": mode,
+        "image_count": image_count,
+        "model": model,
+        "size": size,
+        "aspect_ratio": aspect_ratio,
+        "quality": quality,
+        "user_prompt": prompt.strip(),
+    }
+    return {
+        "model": settings.prompt_optimizer_model.strip(),
+        "messages": [
+            {"role": "system", "content": SERIES_PROMPT_PLANNER_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "请把以下总需求拆解成系列图像提示词。"
+                    "每张图必须承担不同内容模块，但整体像同一套详情页/海报系列。\n\n"
+                    f"{json.dumps(context, ensure_ascii=False)}"
+                ),
+            },
+        ],
+        "temperature": 0.35,
+        "max_tokens": 3800,
+        "stream": False,
+    }
+
+
 def _extract_chat_completion_text(provider_response: dict[str, Any]) -> str:
     choices = provider_response.get("choices") if isinstance(provider_response, dict) else None
     if not isinstance(choices, list) or not choices:
@@ -1115,6 +1167,140 @@ def _extract_chat_completion_text(provider_response: dict[str, Any]) -> str:
                 parts.append(item["text"])
         return "\n".join(parts).strip().strip('"').strip("'").strip()
     return ""
+
+
+async def _plan_series_prompts(
+    provider: OpenAICompatibleImageClient,
+    config: dict[str, Any],
+    settings: Settings,
+    *,
+    mode: str,
+    prompt: str,
+    image_count: int,
+    model: str,
+    size: str,
+    aspect_ratio: str,
+    quality: str,
+) -> dict[str, Any]:
+    try:
+        provider_response = await provider.chat_completion(
+            config,
+            _series_prompt_planner_payload(
+                prompt=prompt,
+                mode=mode,
+                image_count=image_count,
+                model=model,
+                size=size,
+                aspect_ratio=aspect_ratio,
+                quality=quality,
+                settings=settings,
+            ),
+        )
+        text = _extract_chat_completion_text(provider_response)
+        plan = _parse_series_prompt_plan(text, image_count)
+        if plan is not None:
+            plan["source"] = "planner"
+            return plan
+    except Exception:
+        pass
+    plan = _fallback_series_prompt_plan(
+        prompt=prompt,
+        mode=mode,
+        image_count=image_count,
+        size=size,
+        aspect_ratio=aspect_ratio,
+        quality=quality,
+    )
+    plan["source"] = "fallback"
+    return plan
+
+
+def _parse_series_prompt_plan(text: str, image_count: int) -> dict[str, Any] | None:
+    payload = _extract_json_object(text)
+    if not isinstance(payload, dict):
+        return None
+    raw_items = payload.get("items")
+    if not isinstance(raw_items, list):
+        return None
+    items: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_items[:image_count], start=1):
+        if not isinstance(item, dict):
+            continue
+        item_prompt = str(item.get("prompt") or "").strip()
+        if not item_prompt:
+            continue
+        items.append(
+            {
+                "index": index,
+                "title": str(item.get("title") or f"第 {index} 屏").strip(),
+                "copy": str(item.get("copy") or "").strip(),
+                "prompt": item_prompt,
+            }
+        )
+    if len(items) != image_count:
+        return None
+    return {
+        "style_guide": str(payload.get("style_guide") or "").strip(),
+        "items": items,
+    }
+
+
+def _extract_json_object(text: str) -> Any | None:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = [line for line in cleaned.splitlines() if not line.strip().startswith("```")]
+        cleaned = "\n".join(lines).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        cleaned = cleaned[start : end + 1]
+    try:
+        return json.loads(cleaned)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fallback_series_prompt_plan(
+    *,
+    prompt: str,
+    mode: str,
+    image_count: int,
+    size: str,
+    aspect_ratio: str,
+    quality: str,
+) -> dict[str, Any]:
+    modules = [
+        ("核心卖点", "突出产品核心利益点、主视觉和购买理由。"),
+        ("使用场景", "展示产品在真实生活、电商或目标场景中的使用方式。"),
+        ("材质工艺", "解释材质、触感、结构、工艺和品质细节。"),
+        ("成分结构", "拆解填充、面料、内部结构或关键参数。"),
+        ("尺寸定制", "说明尺寸、规格、定制能力和适配范围。"),
+        ("百搭优势", "展示和不同环境、风格、用途的搭配优势。"),
+        ("细节特写", "用近景突出纹理、边缘、缝线、质感和细节。"),
+        ("信任背书", "强调品质保障、耐用性、售后或适合人群。"),
+        ("收尾转化", "做详情页结尾总结，强化品牌感和购买行动。"),
+    ]
+    style_guide = (
+        f"统一系列视觉：{aspect_ratio} 竖版/横版构图按参数执行，{size}，{quality} quality；"
+        "同一产品主体、同一色调、同一字体样式、同一标题和正文排版网格、同一电商详情页视觉系统；"
+        "标题简洁可读，正文短句清晰，避免乱码和不一致的品牌符号。"
+    )
+    if mode == "edit":
+        style_guide += " 严格参考上传图片中的产品主体、外观、材质和结构，保持产品一致性。"
+    items = []
+    for index in range(1, image_count + 1):
+        title, copy = modules[index - 1] if index <= len(modules) else (f"第 {index} 屏", "补充一个不重复的产品详情模块。")
+        prompt_parts = [
+            f"{prompt.strip()}",
+            f"这是同一套系列详情页的第 {index}/{image_count} 屏，主题标题：{title}。",
+            f"本屏说明文案：{copy}",
+            style_guide,
+            "本屏必须和其他屏保持统一色调、字体、标题位置、正文排版、产品比例和视觉语言，但内容模块不能重复。",
+        ]
+        if mode == "edit":
+            prompt_parts.append("根据上传参考图中的同一个产品生成本屏，产品外观必须一致。")
+        items.append({"index": index, "title": title, "copy": copy, "prompt": "\n".join(prompt_parts)})
+    return {"style_guide": style_guide, "items": items}
 
 
 def _provider_image_size(size: str, aspect_ratio: str | None = None) -> str:
@@ -1410,15 +1596,28 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
     config = db.get_config(owner_id, settings)
 
     try:
+        if not isinstance(request_payload, dict):
+            raise ValueError(f"{task['mode'].title()} task payload was missing")
+
         if task["mode"] == "generate":
-            if not isinstance(request_payload, dict):
-                raise ValueError("Generate task payload was missing")
+            requested_count = _request_image_count(request_payload)
+            if requested_count > 1:
+                await _run_series_image_task(
+                    db,
+                    settings,
+                    provider,
+                    auth_client,
+                    task_id=task_id,
+                    task=task,
+                    config=config,
+                    request_payload=request_payload,
+                    image_count=requested_count,
+                )
+                return
             provider_response = await _call_provider_with_retries(
-                lambda: provider.generate_image(config, request_payload)
+                lambda: provider.generate_image(config, _single_image_payload(request_payload))
             )
         elif task["mode"] == "edit":
-            if not isinstance(request_payload, dict):
-                raise ValueError("Edit task payload was missing")
             fields = request_payload.get("fields")
             uploads = request_payload.get("uploads")
             if not isinstance(fields, dict) or not isinstance(uploads, list):
@@ -1428,8 +1627,24 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
                 raise ValueError("Edit task is missing source images")
             saved_mask = request_payload.get("mask")
             mask_file = _load_saved_upload(saved_mask) if isinstance(saved_mask, dict) else None
+            requested_count = _request_image_count(fields)
+            if requested_count > 1:
+                await _run_series_image_task(
+                    db,
+                    settings,
+                    provider,
+                    auth_client,
+                    task_id=task_id,
+                    task=task,
+                    config=config,
+                    request_payload=request_payload,
+                    image_count=requested_count,
+                    image_files=image_files,
+                    mask_file=mask_file,
+                )
+                return
             provider_response = await _call_provider_with_retries(
-                lambda: provider.edit_image(config, fields, image_files, mask_file)
+                lambda: provider.edit_image(config, _single_image_payload(fields), image_files, mask_file)
             )
         else:
             raise ValueError(f"Unsupported task mode: {task['mode']}")
@@ -1449,6 +1664,7 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
             db,
             settings,
             owner_id=latest_task["owner_id"],
+            task_id=task_id,
             mode=latest_task["mode"],
             prompt=latest_task["prompt"],
             model=latest_task["model"],
@@ -1459,6 +1675,7 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
             ledger_cost=ledger_cost,
             input_image_url=latest_task.get("input_image_url"),
             input_image_path=latest_task.get("input_image_path"),
+            batch_index=0,
         )
         db.update_image_task(
             task_id,
@@ -1488,6 +1705,7 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
         failed = _record_failed_history(
             db,
             owner_id=latest_task["owner_id"],
+            task_id=task_id,
             mode=latest_task["mode"],
             prompt=latest_task["prompt"],
             model=latest_task["model"],
@@ -1514,6 +1732,7 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
         failed = _record_failed_history(
             db,
             owner_id=latest_task["owner_id"],
+            task_id=task_id,
             mode=latest_task["mode"],
             prompt=latest_task["prompt"],
             model=latest_task["model"],
@@ -1537,11 +1756,225 @@ async def _run_image_task(app: FastAPI, task_id: str) -> None:
         )
 
 
+async def _run_series_image_task(
+    db: Database,
+    settings: Settings,
+    provider: OpenAICompatibleImageClient,
+    auth_client: Sub2APIAuthClient,
+    *,
+    task_id: str,
+    task: dict[str, Any],
+    config: dict[str, Any],
+    request_payload: dict[str, Any],
+    image_count: int,
+    image_files: list[tuple[str, bytes, str]] | None = None,
+    mask_file: tuple[str, bytes, str] | None = None,
+) -> None:
+    history_ids: list[str] = []
+    usage_items: list[Any] = []
+    created_values: list[Any] = []
+    partial_errors: list[dict[str, Any]] = []
+    latest_for_plan = db.get_image_task_by_id(task_id) or task
+    plan = await _plan_series_prompts(
+        provider,
+        config,
+        settings,
+        mode=latest_for_plan["mode"],
+        prompt=latest_for_plan["prompt"],
+        image_count=image_count,
+        model=latest_for_plan["model"],
+        size=latest_for_plan["size"],
+        aspect_ratio=latest_for_plan.get("aspect_ratio") or "",
+        quality=latest_for_plan["quality"],
+    )
+    plan_items = plan.get("items") if isinstance(plan, dict) else []
+    if not isinstance(plan_items, list) or len(plan_items) != image_count:
+        plan = _fallback_series_prompt_plan(
+            prompt=latest_for_plan["prompt"],
+            mode=latest_for_plan["mode"],
+            image_count=image_count,
+            size=latest_for_plan["size"],
+            aspect_ratio=latest_for_plan.get("aspect_ratio") or "",
+            quality=latest_for_plan["quality"],
+        )
+        plan["source"] = "fallback"
+        plan_items = plan["items"]
+
+    db.update_image_task(
+        task_id,
+        {
+            "result": {
+                "count_requested": image_count,
+                "count_succeeded": 0,
+                "series_plan": _public_series_plan(plan),
+                "usage": [],
+                "partial_errors": [],
+            },
+        },
+    )
+
+    for index in range(image_count):
+        latest_task = db.get_image_task_by_id(task_id) or task
+        plan_item = plan_items[index] if index < len(plan_items) and isinstance(plan_items[index], dict) else {}
+        item_prompt = str(plan_item.get("prompt") or latest_task["prompt"]).strip()
+        try:
+            if latest_task["mode"] == "edit":
+                fields = request_payload.get("fields")
+                if not isinstance(fields, dict) or image_files is None:
+                    raise ValueError("Edit task payload was incomplete")
+                item_payload = _single_image_payload(fields)
+                item_payload["prompt"] = item_prompt
+                provider_response = await _call_provider_with_retries(
+                    lambda: provider.edit_image(config, item_payload, image_files, mask_file)
+                )
+            else:
+                item_payload = _single_image_payload(request_payload)
+                item_payload["prompt"] = item_prompt
+                provider_response = await _call_provider_with_retries(
+                    lambda: provider.generate_image(config, item_payload)
+                )
+            ledger_cost = await _resolve_image_ledger_cost(
+                db,
+                settings,
+                auth_client,
+                owner_id=latest_task["owner_id"],
+                config=config,
+                model=latest_task["model"],
+                size=latest_task["size"],
+                image_count=_provider_response_image_count(provider_response),
+            )
+            items = await _persist_image_response(
+                db,
+                settings,
+                owner_id=latest_task["owner_id"],
+                task_id=task_id,
+                mode=latest_task["mode"],
+                prompt=item_prompt,
+                model=latest_task["model"],
+                size=latest_task["size"],
+                aspect_ratio=latest_task.get("aspect_ratio") or "",
+                quality=latest_task["quality"],
+                provider_response=provider_response,
+                ledger_cost=ledger_cost,
+                input_image_url=latest_task.get("input_image_url"),
+                input_image_path=latest_task.get("input_image_path"),
+                batch_index=len(history_ids),
+            )
+            history_ids.extend(item["id"] for item in items)
+            usage_items.append(provider_response.get("usage"))
+            created_values.append(provider_response.get("created"))
+            db.update_image_task(
+                task_id,
+                {
+                    "result_history_ids": history_ids,
+                    "result": {
+                        "count_requested": image_count,
+                        "count_succeeded": len(history_ids),
+                        "series_plan": _public_series_plan(plan),
+                        "usage": usage_items,
+                        "partial_errors": partial_errors,
+                    },
+                },
+            )
+        except ProviderError as exc:
+            partial_errors.append({"index": index, "error": exc.message, "provider_response": exc.payload})
+        except Exception as exc:
+            partial_errors.append({"index": index, "error": str(exc), "provider_response": None})
+
+    completed_at = utc_now()
+    if history_ids:
+        db.update_image_task(
+            task_id,
+            {
+                "status": "succeeded",
+                "completed_at": completed_at,
+                "result_history_ids": history_ids,
+                "result": {
+                    "created": created_values[-1] if created_values else None,
+                    "created_values": created_values,
+                    "usage": usage_items,
+                    "count_requested": image_count,
+                    "count_succeeded": len(history_ids),
+                    "series_plan": _public_series_plan(plan),
+                    "partial_errors": partial_errors,
+                },
+                "error": None if not partial_errors else f"{len(partial_errors)} image(s) failed in this batch",
+            },
+        )
+        return
+
+    message = partial_errors[0]["error"] if partial_errors else "Image batch generation failed"
+    latest_task = db.get_image_task_by_id(task_id) or task
+    failed = _record_failed_history(
+        db,
+        owner_id=latest_task["owner_id"],
+        task_id=task_id,
+        mode=latest_task["mode"],
+        prompt=latest_task["prompt"],
+        model=latest_task["model"],
+        size=latest_task["size"],
+        aspect_ratio=latest_task.get("aspect_ratio") or "",
+        quality=latest_task["quality"],
+        message=message,
+        provider_response=partial_errors[0].get("provider_response") if partial_errors else None,
+        input_image_url=latest_task.get("input_image_url"),
+        input_image_path=latest_task.get("input_image_path"),
+    )
+    db.update_image_task(
+        task_id,
+        {
+            "status": "failed",
+            "completed_at": completed_at,
+            "result_history_ids": [failed["id"]] if failed else [],
+            "result": {
+                "error": message,
+                "usage": None,
+                "count_requested": image_count,
+                "count_succeeded": 0,
+                "series_plan": _public_series_plan(plan),
+                "partial_errors": partial_errors,
+            },
+            "error": message,
+        },
+    )
+
+
+def _public_series_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": plan.get("source") or "",
+        "style_guide": plan.get("style_guide") or "",
+        "items": [
+            {
+                "index": item.get("index"),
+                "title": item.get("title") or "",
+                "copy": item.get("copy") or "",
+                "prompt": item.get("prompt") or "",
+            }
+            for item in plan.get("items", [])
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _request_image_count(payload: dict[str, Any]) -> int:
+    try:
+        return max(1, min(9, int(payload.get("n") or 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _single_image_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    single = dict(payload)
+    single["n"] = 1
+    return single
+
+
 async def _persist_image_response(
     db: Database,
     settings: Settings,
     *,
     owner_id: str,
+    task_id: str | None = None,
     mode: str,
     prompt: str,
     model: str,
@@ -1552,6 +1985,7 @@ async def _persist_image_response(
     ledger_cost: ImageLedgerCost,
     input_image_url: str | None = None,
     input_image_path: str | None = None,
+    batch_index: int = 0,
 ) -> list[dict[str, Any]]:
     data = provider_response.get("data")
     if not isinstance(data, list) or not data:
@@ -1567,6 +2001,8 @@ async def _persist_image_response(
             owner_id,
             {
                 "id": history_id,
+                "task_id": task_id,
+                "batch_index": batch_index + len(records),
                 "mode": mode,
                 "prompt": prompt,
                 "model": model,
@@ -1648,6 +2084,7 @@ def _is_retryable_provider_error(exc: ProviderError) -> bool:
 def _record_failed_history(
     db: Database,
     owner_id: str,
+    task_id: str | None,
     mode: str,
     prompt: str,
     model: str,
@@ -1662,6 +2099,8 @@ def _record_failed_history(
     return db.create_history(
         owner_id,
         {
+            "task_id": task_id,
+            "batch_index": 0,
             "mode": mode,
             "prompt": prompt,
             "model": model,

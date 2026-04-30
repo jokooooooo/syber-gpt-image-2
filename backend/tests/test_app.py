@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,43 @@ class FakeProvider:
             raise ProviderError(400, "请先在配置页保存 JokoAI API Key")
         self.chat_configs.append(dict(config))
         self.chat_payloads.append(payload)
+        system_content = payload["messages"][0]["content"] if payload.get("messages") else ""
+        if "系列图像提示词规划师" in system_content:
+            user_content = payload["messages"][1]["content"]
+            count = 1
+            mode = "generate"
+            try:
+                context = json.loads(user_content[user_content.index("{") : user_content.rindex("}") + 1])
+                count = int(context.get("image_count") or 1)
+                mode = str(context.get("mode") or "generate")
+            except Exception:
+                pass
+            return {
+                "id": "chatcmpl-series-test",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "style_guide": "统一奶油白电商详情页风格",
+                                    "items": [
+                                        {
+                                            "index": index,
+                                            "title": f"第{index}屏",
+                                            "copy": f"{mode} 模块 {index}",
+                                            "prompt": f"系列拆解提示词 {mode} 第{index}屏，统一风格，内容模块不同",
+                                        }
+                                        for index in range(1, count + 1)
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 24},
+            }
         return {
             "id": "chatcmpl-test",
             "choices": [{"message": {"role": "assistant", "content": "优化后的淘宝机器人主页图提示词"}}],
@@ -318,6 +356,45 @@ def test_generation_passes_resolution_ratio_and_quality(tmp_path: Path) -> None:
         assert provider.generated_payloads[-1]["quality"] == "high"
 
 
+def test_generation_fans_out_multi_image_requests_into_one_task(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        generated = client.post(
+            "/api/images/generate",
+            json={"prompt": "nine product cards", "size": "1K", "aspect_ratio": "1:1", "quality": "low", "n": 3},
+        )
+
+        assert generated.status_code == 200
+        task = wait_for_task(client, generated.json()["id"], attempts=120)
+        history = client.get("/api/history").json()["items"]
+        ledger = client.get("/api/ledger").json()["items"]
+
+        assert task["status"] == "succeeded"
+        assert task["result"]["count_requested"] == 3
+        assert task["result"]["count_succeeded"] == 3
+        assert task["result"]["series_plan"]["source"] == "planner"
+        assert len(task["items"]) == 3
+        assert len(provider.generated_payloads) == 3
+        assert all(payload["n"] == 1 for payload in provider.generated_payloads)
+        assert [payload["prompt"] for payload in provider.generated_payloads] == [
+            "系列拆解提示词 generate 第1屏，统一风格，内容模块不同",
+            "系列拆解提示词 generate 第2屏，统一风格，内容模块不同",
+            "系列拆解提示词 generate 第3屏，统一风格，内容模块不同",
+        ]
+        assert [item["task_id"] for item in task["items"]] == [task["id"], task["id"], task["id"]]
+        assert [item["batch_index"] for item in task["items"]] == [0, 1, 2]
+        assert [item["prompt"] for item in task["items"]] == [
+            "系列拆解提示词 generate 第1屏，统一风格，内容模块不同",
+            "系列拆解提示词 generate 第2屏，统一风格，内容模块不同",
+            "系列拆解提示词 generate 第3屏，统一风格，内容模块不同",
+        ]
+        assert len(history) == 3
+        assert {item["task_id"] for item in history} == {task["id"]}
+        assert len(ledger) == 3
+
+
 def test_generation_retries_retryable_upstream_errors(tmp_path: Path) -> None:
     provider = FlakyProvider(generate_failures=2)
     with make_client(tmp_path, provider=provider) as client:
@@ -441,6 +518,34 @@ def test_edit_persists_upload_and_result(tmp_path: Path) -> None:
         assert len(provider.edited_images[-1]) == 2
         assert provider.edited_images[-1][0][0] == "source.png"
         assert provider.edited_images[-1][1][0] == "style.png"
+
+
+def test_edit_fans_out_multi_image_requests_with_series_prompts(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        response = client.post(
+            "/api/images/edit",
+            data={"prompt": "根据产品图生成四屏详情页", "n": "2", "size": "1K", "aspect_ratio": "9:16"},
+            files=[
+                ("image", ("product.png", b"fake-product", "image/png")),
+            ],
+        )
+
+        assert response.status_code == 200
+        task = wait_for_task(client, response.json()["id"], attempts=120)
+        assert task["status"] == "succeeded"
+        assert task["result"]["series_plan"]["source"] == "planner"
+        assert len(task["items"]) == 2
+        assert len(provider.edited_fields) == 2
+        assert all(fields["n"] == 1 for fields in provider.edited_fields)
+        assert [fields["prompt"] for fields in provider.edited_fields] == [
+            "系列拆解提示词 edit 第1屏，统一风格，内容模块不同",
+            "系列拆解提示词 edit 第2屏，统一风格，内容模块不同",
+        ]
+        assert [len(images) for images in provider.edited_images] == [1, 1]
+        assert [item["input_image_url"] for item in task["items"]]
 
 
 def test_account_includes_balance_and_stats(tmp_path: Path) -> None:

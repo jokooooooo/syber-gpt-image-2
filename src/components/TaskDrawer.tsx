@@ -112,7 +112,11 @@ export default function TaskDrawer() {
             ) : (
               <div className="flex flex-col gap-3">
                 {visibleTasks.map((task) => {
-                  const previewImage = task.items.find((item) => item.image_url)?.image_url || null;
+                  const previewImages = task.items
+                    .filter((item) => item.image_url)
+                    .sort((a, b) => (a.batch_index || 0) - (b.batch_index || 0))
+                    .map((item) => ({ id: item.id, url: item.image_url || '', prompt: item.prompt }));
+                  const previewImage = previewImages[0]?.url || null;
                   return (
                     <div key={task.id} className="border border-white/10 bg-black/30 p-3">
                       <div className="mb-3 flex items-start justify-between gap-3">
@@ -132,7 +136,21 @@ export default function TaskDrawer() {
 
                       <div className="flex gap-3">
                         <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden border border-white/10 bg-black/40">
-                          {previewImage ? (
+                          {previewImages.length > 1 ? (
+                            <div className="grid h-full w-full grid-cols-2 gap-0.5 bg-black p-0.5">
+                              {previewImages.slice(0, 4).map((image) => (
+                                <button
+                                  key={image.id}
+                                  className="min-h-0 min-w-0 cursor-zoom-in overflow-hidden bg-black/40"
+                                  type="button"
+                                  title={t('history_preview')}
+                                  onClick={() => setPreviewItem({ imageUrl: image.url, prompt: image.prompt })}
+                                >
+                                  <img alt={task.prompt} className="h-full w-full object-cover" src={image.url} />
+                                </button>
+                              ))}
+                            </div>
+                          ) : previewImage ? (
                             <button
                               className="h-full w-full cursor-zoom-in bg-black/40"
                               type="button"
@@ -152,6 +170,7 @@ export default function TaskDrawer() {
                             <span>{task.size}</span>
                             {task.aspect_ratio ? <span>{task.aspect_ratio}</span> : null}
                             <span>{task.quality}</span>
+                            {previewImages.length > 1 ? <span>x{previewImages.length}</span> : null}
                           </div>
                           {task.error ? <div className="mt-2 text-xs text-error">{task.error}</div> : null}
                         </div>
