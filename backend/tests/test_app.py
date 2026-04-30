@@ -606,6 +606,8 @@ def test_ecommerce_generate_analyzes_product_and_creates_series_edit_task(tmp_pa
         assert len(provider.edited_fields) == 2
         assert all(fields["size"] == "1152x2048" for fields in provider.edited_fields)
         assert all(fields["n"] == 1 for fields in provider.edited_fields)
+        assert all("商品一致性强约束" in fields["prompt"] for fields in provider.edited_fields)
+        assert all("保持白色方形抱枕芯主体" in fields["prompt"] for fields in provider.edited_fields)
         assert [item["input_image_url"] for item in task["items"]]
         history = client.get("/api/history").json()["items"]
         assert history[0]["task_request"]["ecommerce"]["product_name"] == "天鹅绒PP棉抱枕芯"
@@ -635,9 +637,50 @@ def test_history_item_can_be_used_as_single_edit_source(tmp_path: Path) -> None:
         assert edit_task["status"] == "succeeded"
         assert edit_task["mode"] == "edit"
         assert edit_task["prompt"] == "基于这张图改成夏季风格"
-        assert provider.edited_fields[-1]["prompt"] == "基于这张图改成夏季风格"
+        assert provider.edited_fields[-1]["prompt"].startswith("基于这张图改成夏季风格")
+        assert "第一张图是当前成品图" in provider.edited_fields[-1]["prompt"]
         assert len(provider.edited_images[-1]) == 1
         assert edit_task["items"][0]["input_image_url"] == source_item["image_url"]
+
+
+def test_ecommerce_history_edit_uses_product_current_and_extra_references(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        response = client.post(
+            "/api/ecommerce/generate",
+            data={
+                "product_name": "天鹅绒PP棉抱枕芯",
+                "materials": "天鹅绒填充",
+                "n": "1",
+                "size": "1K",
+                "aspect_ratio": "1:1",
+            },
+            files={"image": ("product.png", b"fake-product", "image/png")},
+        )
+        assert response.status_code == 200
+        source_task = wait_for_task(client, response.json()["id"], attempts=120)
+        source_item = source_task["items"][0]
+
+        edit_response = client.post(
+            f"/api/history/{source_item['id']}/edit",
+            data={"prompt": "把这一屏改成材质特写，保留商品主体", "size": "1K", "aspect_ratio": "1:1", "quality": "medium"},
+            files={"image": ("scene.png", b"fake-scene", "image/png")},
+        )
+
+        assert edit_response.status_code == 200
+        edit_task = wait_for_task(client, edit_response.json()["id"])
+        assert edit_task["status"] == "succeeded"
+        assert edit_task["prompt"] == "把这一屏改成材质特写，保留商品主体"
+        assert edit_task["items"][0]["input_image_url"] == source_item["input_image_url"]
+        assert provider.edited_fields[-1]["prompt"].startswith("把这一屏改成材质特写，保留商品主体")
+        assert "第一张图是原商品主图" in provider.edited_fields[-1]["prompt"]
+        assert "额外上传的 1 张参考图" in provider.edited_fields[-1]["prompt"]
+        assert len(provider.edited_images[-1]) == 3
+        assert provider.edited_images[-1][0][0].endswith(".png")
+        assert provider.edited_images[-1][1][0].endswith(".png")
+        assert provider.edited_images[-1][2][0] == "scene.png"
 
 
 def test_account_includes_balance_and_stats(tmp_path: Path) -> None:

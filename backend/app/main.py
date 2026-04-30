@@ -13,7 +13,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .auth_client import Sub2APIAuthClient
 from .db import Database, utc_now
@@ -658,12 +658,25 @@ def create_app(
     @app.post("/api/history/{history_id}/edit")
     async def edit_history_image(
         history_id: str,
-        request: HistoryEditRequest,
         raw_request: Request,
+        prompt: Annotated[str | None, Form()] = None,
+        image: Annotated[list[UploadFile] | None, File()] = None,
+        model: Annotated[str | None, Form()] = None,
+        size: Annotated[str | None, Form()] = None,
+        aspect_ratio: Annotated[str | None, Form()] = None,
+        quality: Annotated[str | None, Form()] = None,
         viewer: ViewerContext = Depends(_viewer),
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
     ) -> dict[str, Any]:
+        edit_request = await _parse_history_edit_request(
+            raw_request,
+            prompt=prompt,
+            model=model,
+            size=size,
+            aspect_ratio=aspect_ratio,
+            quality=quality,
+        )
         source = db.get_history(viewer.owner_id, history_id)
         if source is None:
             raise HTTPException(status_code=404, detail="History item not found")
@@ -672,11 +685,28 @@ def create_app(
             raise HTTPException(status_code=400, detail="History item has no stored image to edit")
         config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
         source_upload = load_stored_image_as_upload(str(image_path), source.get("image_url"))
+        uploads: list[dict[str, str]] = []
+        original_upload: dict[str, str] | None = None
+        input_image_path = source.get("input_image_path")
+        if input_image_path and str(input_image_path) != str(image_path) and Path(str(input_image_path)).exists():
+            original_upload = load_stored_image_as_upload(str(input_image_path), source.get("input_image_url"))
+            uploads.append(original_upload)
+        uploads.append(source_upload)
+        extra_uploads = [await save_upload(settings, upload) for upload in (image or [])]
+        uploads.extend(extra_uploads)
+        provider_prompt = _history_edit_provider_prompt(
+            edit_request.prompt,
+            has_product_reference=original_upload is not None,
+            extra_reference_count=len(extra_uploads),
+        )
+        primary_reference = original_upload or source_upload
+        source_task_request = source.get("task_request")
+        source_ecommerce = source_task_request.get("ecommerce") if isinstance(source_task_request, dict) else None
         fields = {
-            "model": request.model or source.get("model") or config["model"],
-            "prompt": request.prompt,
-            "size": _provider_image_size(request.size or source.get("size") or config["default_size"], request.aspect_ratio or source.get("aspect_ratio") or None),
-            "quality": request.quality or source.get("quality") or config["default_quality"],
+            "model": edit_request.model or source.get("model") or config["model"],
+            "prompt": provider_prompt,
+            "size": _provider_image_size(edit_request.size or source.get("size") or config["default_size"], edit_request.aspect_ratio or source.get("aspect_ratio") or None),
+            "quality": edit_request.quality or source.get("quality") or config["default_quality"],
             "n": "1",
             "response_format": "b64_json",
         }
@@ -684,19 +714,20 @@ def create_app(
             viewer.owner_id,
             {
                 "mode": "edit",
-                "prompt": request.prompt,
+                "prompt": edit_request.prompt,
                 "model": fields["model"],
                 "size": fields["size"],
-                "aspect_ratio": request.aspect_ratio or source.get("aspect_ratio") or "",
+                "aspect_ratio": edit_request.aspect_ratio or source.get("aspect_ratio") or "",
                 "quality": fields["quality"],
                 "request": {
                     "fields": fields,
-                    "uploads": [source_upload],
+                    "uploads": uploads,
                     "mask": None,
                     "source_history_id": history_id,
+                    "ecommerce": source_ecommerce if isinstance(source_ecommerce, dict) else None,
                 },
-                "input_image_url": source.get("image_url"),
-                "input_image_path": source.get("image_path"),
+                "input_image_url": primary_reference.get("url"),
+                "input_image_path": primary_reference.get("path"),
             },
         )
         _schedule_image_task(raw_request.app, task["id"])
@@ -911,7 +942,7 @@ def create_app(
         )
         fields = {
             "model": model or config["model"],
-            "prompt": prompt,
+            "prompt": _append_ecommerce_consistency_lock(prompt, analysis),
             "size": _provider_image_size(size or config["default_size"], aspect_ratio),
             "quality": quality or config["default_quality"],
             "n": str(n),
@@ -1449,6 +1480,79 @@ async def _analyze_ecommerce_product(
         "details": [],
         "generation_constraints": "严格参考上传商品图，保持同一商品主体、颜色、材质、比例、结构和轮廓一致。",
     }
+
+
+async def _parse_history_edit_request(
+    raw_request: Request,
+    *,
+    prompt: str | None,
+    model: str | None,
+    size: str | None,
+    aspect_ratio: str | None,
+    quality: str | None,
+) -> HistoryEditRequest:
+    content_type = raw_request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            payload = await raw_request.json()
+            return HistoryEditRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+
+    try:
+        return HistoryEditRequest.model_validate(
+            {
+                "prompt": prompt,
+                "model": model,
+                "size": size,
+                "aspect_ratio": aspect_ratio,
+                "quality": quality,
+            }
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+
+def _history_edit_provider_prompt(prompt: str, *, has_product_reference: bool, extra_reference_count: int) -> str:
+    rules = [
+        "单图修改参考图规则：",
+        "当前生成任务会基于已有成品图继续修改，必须保留原图的主体构图、商品/角色身份和视觉连续性。",
+    ]
+    if has_product_reference:
+        rules.extend(
+            [
+                "第一张图是原商品主图，是商品身份参考，优先级最高。",
+                "第二张图是当前成品图，是版式、文案层级、画面风格和待修改内容参考。",
+                "必须严格保持第一张商品图中的商品主体一致，包括颜色、材质、纹理、结构、比例、轮廓、核心细节和整体形态。",
+                "只允许按用户修改要求调整详情页背景、排版、标题、说明文案、辅助装饰、场景氛围或局部细节。",
+                "不得重新设计商品，不得改变商品颜色或材质，不得把商品替换成同类其他款式。",
+            ]
+        )
+    else:
+        rules.append("第一张图是当前成品图，请以这张图为主要参考继续修改，不要无关重绘。")
+    if extra_reference_count > 0:
+        rules.append(f"额外上传的 {extra_reference_count} 张参考图只作为风格、场景、局部细节或材质补充，不得覆盖主商品/主成品身份。")
+    return f"{prompt.strip()}\n\n" + "\n".join(rules)
+
+
+def _append_ecommerce_consistency_lock(prompt: str, ecommerce_analysis: dict[str, Any] | None) -> str:
+    constraints = ""
+    if isinstance(ecommerce_analysis, dict):
+        raw_constraints = ecommerce_analysis.get("generation_constraints")
+        if isinstance(raw_constraints, str):
+            constraints = raw_constraints.strip()
+    rules = [
+        "商品一致性强约束：",
+        "必须严格保持上传商品主图中的商品主体一致，包括颜色、材质、纹理、结构、比例、轮廓、核心细节和整体形态。",
+        "只允许改变详情页背景、排版、标题、说明文案、辅助装饰和使用场景。",
+        "不得重新设计商品，不得改变商品颜色，不得改变商品材质，不得把商品替换成同类其他款式。",
+        "如果商品图识别结果和用户字段冲突，以上传商品图可见外观为准。",
+    ]
+    if constraints:
+        rules.append(f"商品识别约束：{constraints}")
+    return f"{prompt.strip()}\n\n" + "\n".join(rules)
 
 
 def _parse_series_prompt_plan(text: str, image_count: int) -> dict[str, Any] | None:
@@ -2065,19 +2169,24 @@ async def _run_series_image_task(
         latest_task = db.get_image_task_by_id(task_id) or task
         plan_item = plan_items[index] if index < len(plan_items) and isinstance(plan_items[index], dict) else {}
         item_prompt = str(plan_item.get("prompt") or latest_task["prompt"]).strip()
+        provider_item_prompt = (
+            _append_ecommerce_consistency_lock(item_prompt, ecommerce_analysis)
+            if isinstance(ecommerce_analysis, dict)
+            else item_prompt
+        )
         try:
             if latest_task["mode"] == "edit":
                 fields = request_payload.get("fields")
                 if not isinstance(fields, dict) or image_files is None:
                     raise ValueError("Edit task payload was incomplete")
                 item_payload = _single_image_payload(fields)
-                item_payload["prompt"] = item_prompt
+                item_payload["prompt"] = provider_item_prompt
                 provider_response = await _call_provider_with_retries(
                     lambda: provider.edit_image(config, item_payload, image_files, mask_file)
                 )
             else:
                 item_payload = _single_image_payload(request_payload)
-                item_payload["prompt"] = item_prompt
+                item_payload["prompt"] = provider_item_prompt
                 provider_response = await _call_provider_with_retries(
                     lambda: provider.generate_image(config, item_payload)
                 )

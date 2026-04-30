@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Download, ImagePlus, Loader2, Maximize2, PencilLine, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Download, ImagePlus, Loader2, Maximize2, Paperclip, PencilLine, RefreshCw, Trash2, X } from 'lucide-react';
 import {
   deleteHistory,
   editHistoryImage,
@@ -55,12 +55,16 @@ export default function Ecommerce() {
   const [previewItem, setPreviewItem] = useState<{ imageUrl: string | null; prompt: string; referenceUrl?: string | null } | null>(null);
   const [editingItem, setEditingItem] = useState<HistoryItem | null>(null);
   const [editPrompt, setEditPrompt] = useState('');
+  const [editReferenceFiles, setEditReferenceFiles] = useState<File[]>([]);
+  const [editReferencePreviews, setEditReferencePreviews] = useState<{ name: string; url: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [editReferenceDragging, setEditReferenceDragging] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const editReferenceInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +95,12 @@ export default function Ecommerce() {
     setProductPreview(preview);
     return () => URL.revokeObjectURL(preview.url);
   }, [productImage]);
+
+  useEffect(() => {
+    const previews = editReferenceFiles.map((file) => ({ name: file.name, url: URL.createObjectURL(file) }));
+    setEditReferencePreviews(previews);
+    return () => previews.forEach((preview) => URL.revokeObjectURL(preview.url));
+  }, [editReferenceFiles]);
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -129,8 +139,26 @@ export default function Ecommerce() {
     [t],
   );
 
+  const addEditReferenceFiles = useCallback(
+    (files: File[]) => {
+      const images = files.filter((file) => IMAGE_TYPES.includes(file.type));
+      if (images.length === 0) {
+        setError(t('home_ref_image_invalid'));
+        return;
+      }
+      setEditReferenceFiles((current) => [...current, ...images].slice(0, 6));
+      setError('');
+    },
+    [t],
+  );
+
   function handleProductImageChange(event: ChangeEvent<HTMLInputElement>) {
     selectImageFile(Array.from(event.target.files || []));
+    event.target.value = '';
+  }
+
+  function handleEditReferenceChange(event: ChangeEvent<HTMLInputElement>) {
+    addEditReferenceFiles(Array.from(event.target.files || []));
     event.target.value = '';
   }
 
@@ -145,6 +173,19 @@ export default function Ecommerce() {
     event.preventDefault();
     setDragging(false);
     selectImageFile(Array.from(event.dataTransfer.files || []));
+  }
+
+  function handleEditReferenceDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!Array.from(event.dataTransfer.types).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    setEditReferenceDragging(true);
+  }
+
+  function handleEditReferenceDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setEditReferenceDragging(false);
+    addEditReferenceFiles(Array.from(event.dataTransfer.files || []));
   }
 
   async function handleSubmit() {
@@ -198,6 +239,7 @@ export default function Ecommerce() {
   function beginEdit(item: HistoryItem) {
     setEditingItem(item);
     setEditPrompt(item.prompt);
+    setEditReferenceFiles([]);
   }
 
   async function submitEdit() {
@@ -210,11 +252,12 @@ export default function Ecommerce() {
         size: editingItem.size,
         aspect_ratio: editingItem.aspect_ratio,
         quality: editingItem.quality,
-      });
+      }, editReferenceFiles);
       addTask(task);
       openDrawer();
       setEditingItem(null);
       setEditPrompt('');
+      setEditReferenceFiles([]);
       setMessage(t('home_message_edit_sent'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -390,19 +433,72 @@ export default function Ecommerce() {
         onClose={() => {
           setEditingItem(null);
           setEditPrompt('');
+          setEditReferenceFiles([]);
         }}
         onCopy={() => copyPrompt(editPrompt).catch(() => undefined)}
       />
       {editingItem ? (
-        <button
-          className="fixed bottom-5 right-5 z-[230] flex h-12 items-center gap-2 bg-primary px-5 text-xs font-black uppercase tracking-widest text-black shadow-[0_0_20px_rgba(0,243,255,0.45)] hover:bg-white disabled:opacity-40"
-          type="button"
-          disabled={loading || !editPrompt.trim()}
-          onClick={submitEdit}
-        >
-          {loading ? <Loader2 className="animate-spin" size={16} /> : <PencilLine size={16} />}
-          {t('ecom_edit_this_image')}
-        </button>
+        <div className="fixed bottom-4 left-3 right-3 z-[230] flex flex-col gap-2 sm:left-auto sm:right-5 sm:w-[420px]">
+          <div
+            className={`border bg-black/95 p-3 shadow-[0_0_24px_rgba(0,0,0,0.45)] backdrop-blur ${
+              editReferenceDragging ? 'border-secondary bg-secondary/10' : 'border-primary/30'
+            }`}
+            onDragEnter={handleEditReferenceDragOver}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setEditReferenceDragging(false);
+            }}
+            onDragOver={handleEditReferenceDragOver}
+            onDrop={handleEditReferenceDrop}
+          >
+            <input
+              ref={editReferenceInputRef}
+              className="hidden"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              onChange={handleEditReferenceChange}
+            />
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-secondary">{t('ecom_edit_references')}</div>
+                <div className="mt-1 text-xs leading-5 text-white/55">{t('ecom_edit_reference_tip')}</div>
+              </div>
+              <button
+                className="flex h-9 shrink-0 items-center gap-2 border border-primary/35 px-3 text-[10px] font-bold uppercase tracking-widest text-primary hover:bg-primary/10"
+                type="button"
+                onClick={() => editReferenceInputRef.current?.click()}
+              >
+                <Paperclip size={13} />
+                {t('ecom_add_reference')}
+              </button>
+            </div>
+            {editReferencePreviews.length > 0 ? (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {editReferencePreviews.map((preview, index) => (
+                  <div key={`${preview.name}-${preview.url}`} className="relative h-16 w-16 shrink-0 overflow-hidden border border-white/10 bg-black">
+                    <img alt={preview.name} className="h-full w-full object-cover" src={preview.url} />
+                    <button
+                      className="absolute right-0 top-0 flex h-6 w-6 items-center justify-center bg-black/80 text-white/80 hover:text-error"
+                      type="button"
+                      onClick={() => setEditReferenceFiles((current) => current.filter((_, currentIndex) => currentIndex !== index))}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <button
+            className="flex h-12 items-center justify-center gap-2 bg-primary px-5 text-xs font-black uppercase tracking-widest text-black shadow-[0_0_20px_rgba(0,243,255,0.45)] hover:bg-white disabled:opacity-40"
+            type="button"
+            disabled={loading || !editPrompt.trim()}
+            onClick={submitEdit}
+          >
+            {loading ? <Loader2 className="animate-spin" size={16} /> : <PencilLine size={16} />}
+            {t('ecom_edit_this_image')}
+          </button>
+        </div>
       ) : null}
     </div>
   );

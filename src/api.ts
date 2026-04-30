@@ -439,10 +439,23 @@ export function unpublishHistory(id: string) {
   return request<{ ok: boolean; item: HistoryItem }>(`/api/history/${id}/publish`, { method: 'DELETE' });
 }
 
-export function editHistoryImage(id: string, payload: GeneratePayload) {
+export function editHistoryImage(id: string, payload: GeneratePayload, referenceImages: File[] = []) {
+  if (referenceImages.length === 0) {
+    return request<ImageTask>(`/api/history/${id}/edit`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+  const form = new FormData();
+  form.set('prompt', payload.prompt);
+  if (payload.model) form.set('model', payload.model);
+  if (payload.size) form.set('size', payload.size);
+  if (payload.aspect_ratio) form.set('aspect_ratio', payload.aspect_ratio);
+  if (payload.quality) form.set('quality', payload.quality);
+  referenceImages.forEach((image) => form.append('image', image));
   return request<ImageTask>(`/api/history/${id}/edit`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: form,
   });
 }
 
