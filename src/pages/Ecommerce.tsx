@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Download, ImagePlus, Loader2, Maximize2, Paperclip, PencilLine, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Clipboard, Download, ImagePlus, Loader2, Maximize2, Paperclip, PencilLine, RefreshCw, Sparkles, Trash2, X } from 'lucide-react';
 import {
   deleteHistory,
   editHistoryImage,
   formatDate,
+  generateEcommercePublishCopy,
   generateEcommerceImages,
   getConfig,
   getHistory,
+  type EcommercePublishCopyResult,
   HistoryItem,
 } from '../api';
 import CompactInput from '../components/CompactInput';
@@ -57,6 +59,8 @@ export default function Ecommerce() {
   const [editPrompt, setEditPrompt] = useState('');
   const [editReferenceFiles, setEditReferenceFiles] = useState<File[]>([]);
   const [editReferencePreviews, setEditReferencePreviews] = useState<{ name: string; url: string }[]>([]);
+  const [publishCopies, setPublishCopies] = useState<Record<string, EcommercePublishCopyResult>>({});
+  const [publishCopyLoadingKey, setPublishCopyLoadingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -236,6 +240,44 @@ export default function Ecommerce() {
     setHistoryItems((current) => current.filter((historyItem) => historyItem.id !== item.id));
   }
 
+  async function openProject(group: HistoryGroup) {
+    const ecommerce = group.first.task_request?.ecommerce;
+    if (ecommerce) {
+      setForm({
+        productName: ecommerce.product_name || '',
+        materials: ecommerce.materials || '',
+        sellingPoints: ecommerce.selling_points || '',
+        scenarios: ecommerce.scenarios || '',
+        platform: ecommerce.platform || '淘宝/抖音',
+        style: ecommerce.style || '高级、干净、统一电商详情页',
+        extraRequirements: ecommerce.extra_requirements || '',
+      });
+    }
+    setImageScale(normalizeImageScale(group.first.size));
+    setAspectRatio(group.first.aspect_ratio || '1:1');
+    setImageQuality(group.first.quality || 'auto');
+    setImageCount(String(Math.max(1, Math.min(9, group.images.length || group.items.length || 1))));
+    setSelectedGroupKey(group.key);
+    setMessage(t('ecom_form_restored'));
+
+    if (!group.first.input_image_url) {
+      setProductImage(null);
+      return;
+    }
+    try {
+      const response = await fetch(group.first.input_image_url, { credentials: 'include' });
+      if (!response.ok) throw new Error(response.statusText);
+      const blob = await response.blob();
+      const contentType = blob.type || 'image/png';
+      const extension = contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
+      const productName = ecommerce?.product_name?.trim() || group.title || 'product';
+      const file = new File([blob], `${productName}.${extension}`, { type: contentType });
+      setProductImage(file);
+    } catch {
+      setProductImage(null);
+    }
+  }
+
   function beginEdit(item: HistoryItem) {
     setEditingItem(item);
     setEditPrompt(item.prompt);
@@ -269,6 +311,37 @@ export default function Ecommerce() {
   async function copyPrompt(prompt: string) {
     await copyTextToClipboard(prompt);
     setMessage(t('home_prompt_copied'));
+  }
+
+  async function copyPublishText(text: string) {
+    await copyTextToClipboard(text);
+    setMessage(t('ecom_publish_copied'));
+  }
+
+  async function generatePublishCopy(group: HistoryGroup) {
+    const ecommerce = group.first.task_request?.ecommerce;
+    setPublishCopyLoadingKey(group.key);
+    setError('');
+    try {
+      const copy = await generateEcommercePublishCopy({
+        product_name: ecommerce?.product_name || group.title,
+        materials: ecommerce?.materials || '',
+        selling_points: ecommerce?.selling_points || '',
+        scenarios: ecommerce?.scenarios || '',
+        platform: ecommerce?.platform || '',
+        style: ecommerce?.style || '',
+        extra_requirements: ecommerce?.extra_requirements || '',
+        image_count: group.images.length || group.items.length || 1,
+        size: group.first.size,
+        aspect_ratio: group.first.aspect_ratio,
+      });
+      setPublishCopies((current) => ({ ...current, [group.key]: copy }));
+      setMessage(t('ecom_publish_generated'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublishCopyLoadingKey(null);
+    }
   }
 
   return (
@@ -388,6 +461,10 @@ export default function Ecommerce() {
             onDeleteItem={(item) => handleDeleteItem(item).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
             onEdit={beginEdit}
             onCopy={(prompt) => copyPrompt(prompt).catch(() => undefined)}
+            onCopyText={(text) => copyPublishText(text).catch(() => undefined)}
+            publishCopy={publishCopies[selectedGroup.key] || null}
+            publishCopyLoading={publishCopyLoadingKey === selectedGroup.key}
+            onGeneratePublishCopy={() => generatePublishCopy(selectedGroup)}
             t={t}
           />
         </section>
@@ -406,7 +483,7 @@ export default function Ecommerce() {
                 <ProjectCard
                   key={group.key}
                   group={group}
-                  onOpen={() => setSelectedGroupKey(group.key)}
+                  onOpen={() => openProject(group).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
                   onDelete={() => handleDeleteGroup(group).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
                   t={t}
                 />
@@ -544,6 +621,10 @@ function ProjectDetail({
   onDeleteItem,
   onEdit,
   onCopy,
+  onCopyText,
+  publishCopy,
+  publishCopyLoading,
+  onGeneratePublishCopy,
   t,
 }: {
   group: HistoryGroup;
@@ -551,6 +632,10 @@ function ProjectDetail({
   onDeleteItem: (item: HistoryItem) => void;
   onEdit: (item: HistoryItem) => void;
   onCopy: (prompt: string) => void;
+  onCopyText: (text: string) => void;
+  publishCopy: EcommercePublishCopyResult | null;
+  publishCopyLoading: boolean;
+  onGeneratePublishCopy: () => void;
   t: (key: any, vars?: Record<string, string | number>) => string;
 }) {
   const referenceUrl = group.first.input_image_url;
@@ -578,6 +663,57 @@ function ProjectDetail({
           </div>
         </div>
       </div>
+
+      <div className="mb-5 border border-primary/20 bg-black/55 p-4">
+        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-secondary">
+              <Sparkles size={14} />
+              {t('ecom_publish_material')}
+            </div>
+            <p className="text-xs text-white/45">{t('ecom_publish_hint')}</p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:w-[360px]">
+            <button
+              className="flex h-10 items-center justify-center gap-2 bg-secondary text-[10px] font-black uppercase tracking-widest text-black hover:bg-white disabled:opacity-50"
+              type="button"
+              disabled={publishCopyLoading}
+              onClick={onGeneratePublishCopy}
+            >
+              {publishCopyLoading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+              {publishCopy ? t('ecom_regenerate_publish') : t('ecom_generate_publish')}
+            </button>
+          </div>
+        </div>
+        {publishCopy ? (
+          <div>
+            <div className="mb-3 grid grid-cols-3 gap-2 md:w-[300px]">
+              <button className="h-9 border border-primary/30 text-[10px] font-bold uppercase tracking-widest text-primary hover:bg-primary/10" type="button" onClick={() => onCopyText(publishCopy.title)}>
+                {t('ecom_copy_title')}
+              </button>
+              <button className="h-9 border border-primary/30 text-[10px] font-bold uppercase tracking-widest text-primary hover:bg-primary/10" type="button" onClick={() => onCopyText(publishCopy.body)}>
+                {t('ecom_copy_body')}
+              </button>
+              <button className="h-9 border border-secondary bg-secondary/15 text-[10px] font-black uppercase tracking-widest text-secondary hover:bg-secondary hover:text-black" type="button" onClick={() => onCopyText(`${publishCopy.title}\n\n${publishCopy.body}`)}>
+                {t('ecom_copy_all')}
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[320px_1fr]">
+              <div className="border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-2 text-[9px] uppercase tracking-widest text-white/35">{t('ecom_publish_title')}</div>
+                <p className="text-sm font-bold leading-6 text-white">{publishCopy.title}</p>
+              </div>
+              <div className="border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-2 text-[9px] uppercase tracking-widest text-white/35">{t('ecom_publish_body')}</div>
+                <p className="whitespace-pre-wrap text-xs leading-6 text-white/75">{publishCopy.body}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="border border-dashed border-white/10 bg-white/[0.02] p-4 text-xs leading-6 text-white/45">{t('ecom_publish_empty')}</div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
         {group.images.map((image, index) => (
           <div key={image.id} className="overflow-hidden border border-white/10 bg-black">

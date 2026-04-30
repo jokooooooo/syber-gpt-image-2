@@ -198,6 +198,27 @@ export type PromptOptimizeResult = {
   usage: Record<string, unknown> | null;
 };
 
+export type EcommercePublishCopyPayload = {
+  product_name?: string;
+  materials?: string;
+  selling_points?: string;
+  scenarios?: string;
+  platform?: string;
+  style?: string;
+  extra_requirements?: string;
+  image_count?: number;
+  size?: string;
+  aspect_ratio?: string;
+  model?: string;
+};
+
+export type EcommercePublishCopyResult = {
+  title: string;
+  body: string;
+  model: string;
+  usage: Record<string, unknown> | null;
+};
+
 export type EcommerceGeneratePayload = {
   product_name?: string;
   materials?: string;
@@ -468,6 +489,13 @@ export function generateImage(payload: GeneratePayload) {
 
 export function optimizePrompt(payload: PromptOptimizePayload) {
   return request<PromptOptimizeResult>('/api/prompts/optimize', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function generateEcommercePublishCopy(payload: EcommercePublishCopyPayload) {
+  return request<EcommercePublishCopyResult>('/api/ecommerce/publish-copy', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

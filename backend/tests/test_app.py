@@ -111,6 +111,25 @@ class FakeProvider:
                 ],
                 "usage": {"total_tokens": 24},
             }
+        if "电商种草文案策划" in system_content:
+            return {
+                "id": "chatcmpl-ecommerce-copy-test",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "title": "抱枕芯详情页种草图",
+                                    "body": "这组图围绕天鹅绒PP棉抱枕芯展开，重点突出柔软触感、蓬松回弹和可定做尺寸，适合放在沙发、床头和办公休憩场景里做种草展示。#电商设计 #小红书运营 #商品详情页",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 20},
+            }
         return {
             "id": "chatcmpl-test",
             "choices": [{"message": {"role": "assistant", "content": "优化后的淘宝机器人主页图提示词"}}],
@@ -331,6 +350,37 @@ def test_prompt_optimizer_requires_api_key(tmp_path: Path) -> None:
 
         assert response.status_code == 400
         assert "API Key" in response.json()["detail"]
+
+
+def test_ecommerce_publish_copy_uses_current_provider_key(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        response = client.post(
+            "/api/ecommerce/publish-copy",
+            json={
+                "product_name": "天鹅绒PP棉抱枕芯",
+                "materials": "天鹅绒填充，高密度磨毛布料",
+                "selling_points": "可定做尺寸，蓬松回弹",
+                "scenarios": "沙发、床头、办公休憩",
+                "platform": "小红书",
+                "style": "奶油风电商详情页",
+                "image_count": 4,
+                "size": "1152x2048",
+                "aspect_ratio": "9:16",
+            },
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["title"] == "抱枕芯详情页种草图"
+        assert "天鹅绒PP棉抱枕芯" in payload["body"]
+        assert payload["model"] == "gpt-5.5"
+        assert provider.chat_configs[-1]["api_key"] == "sk-test-123456"
+        chat_payload = provider.chat_payloads[-1]
+        assert "电商种草文案策划" in chat_payload["messages"][0]["content"]
+        assert "可定做尺寸" in chat_payload["messages"][1]["content"]
 
 
 def test_guest_history_is_isolated_by_cookie(tmp_path: Path) -> None:
