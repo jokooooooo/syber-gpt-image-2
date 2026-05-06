@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, MailPlus, Send } from 'lucide-react';
 import { PublicAuthSettings, getAuthPublicSettings, registerAccount, sendVerifyCode } from '../api';
 import { useAuth } from '../auth';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 export default function Register() {
   const navigate = useNavigate();
   const { viewer, setViewer } = useAuth();
   const { t } = useSite();
+  const { notifyError, notifySuccess } = useNotifier();
   const [settings, setSettings] = useState<PublicAuthSettings | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -18,8 +20,6 @@ export default function Register() {
   const [countdown, setCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
 
   useEffect(() => {
     getAuthPublicSettings().then(setSettings).catch(() => setSettings(null));
@@ -41,14 +41,12 @@ export default function Register() {
 
   async function handleSendCode() {
     setSendingCode(true);
-    setError('');
-    setStatus('');
     try {
       const result = await sendVerifyCode({ email: email.trim() });
-      setStatus(result.message);
+      notifySuccess(result.message);
       setCountdown(result.countdown || 60);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSendingCode(false);
     }
@@ -57,8 +55,6 @@ export default function Register() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setLoading(true);
-    setError('');
-    setStatus('');
     try {
       const result = await registerAccount({
         email: email.trim(),
@@ -72,7 +68,7 @@ export default function Register() {
         navigate('/account', { replace: true });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -88,12 +84,6 @@ export default function Register() {
         <p className="text-sm text-white/50 mb-8">
           {t('register_desc')}
         </p>
-
-        {(error || status) && (
-          <div className={`mb-6 border p-4 text-xs ${error ? 'border-error/40 bg-error/10 text-error' : 'border-tertiary/40 bg-tertiary/10 text-tertiary'}`}>
-            {error || status}
-          </div>
-        )}
 
         {!canRegister && (
           <div className="border border-error/40 bg-error/10 p-4 text-xs text-error">

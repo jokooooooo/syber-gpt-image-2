@@ -3,13 +3,31 @@ import type { ReactNode } from 'react';
 import { getImageTask, HistoryItem, ImageTask, listImageTasks } from './api';
 import { useAuth } from './auth';
 
-export type TaskToast = {
+export type TaskStatusToast = {
+  type: 'task';
   id: string;
   taskId: string;
   status: 'succeeded' | 'failed';
   prompt: string;
   createdAt: number;
   error: string | null;
+};
+
+export type NoticeToast = {
+  type: 'notice';
+  id: string;
+  kind: 'success' | 'error' | 'info';
+  title?: string;
+  message: string;
+  createdAt: number;
+};
+
+export type TaskToast = TaskStatusToast | NoticeToast;
+
+export type NotifyInput = {
+  kind?: NoticeToast['kind'];
+  title?: string;
+  message: string;
 };
 
 type TaskCenterValue = {
@@ -23,6 +41,7 @@ type TaskCenterValue = {
   toggleDrawer: () => void;
   addTask: (task: ImageTask) => void;
   refreshTasks: () => Promise<void>;
+  notify: (toast: NotifyInput) => void;
   dismissToast: (toastId: string) => void;
 };
 
@@ -65,6 +84,24 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
     setToasts((current) => current.filter((toast) => toast.id !== toastId));
   }, []);
 
+  const notify = useCallback((toast: NotifyInput) => {
+    const message = toast.message.trim();
+    if (!message) {
+      return;
+    }
+    setToasts((current) => [
+      {
+        type: 'notice',
+        id: `notice:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+        kind: toast.kind || 'info',
+        title: toast.title,
+        message,
+        createdAt: Date.now(),
+      },
+      ...current,
+    ].slice(0, 6));
+  }, []);
+
   const notifyCompletedTasks = useCallback((previous: ImageTask[], next: ImageTask[]) => {
     const previousById = new Map(previous.map((task) => [task.id, task]));
     const completed = next.filter((task) => {
@@ -80,6 +117,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       return;
     }
     const newToasts = completed.map((task) => ({
+      type: 'task' as const,
       id: `${task.id}:${task.status}:${task.updated_at}`,
       taskId: task.id,
       status: task.status,
@@ -119,6 +157,7 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
     if (task.status === 'succeeded' || task.status === 'failed') {
       setToasts((current) => [
         {
+          type: 'task',
           id: `${task.id}:${task.status}:${task.updated_at}`,
           taskId: task.id,
           status: task.status,
@@ -215,9 +254,10 @@ export function TaskCenterProvider({ children }: { children: ReactNode }) {
       toggleDrawer: () => setDrawerOpen((current) => !current),
       addTask,
       refreshTasks,
+      notify,
       dismissToast,
     }),
-    [activeTaskIds.length, addTask, dismissToast, drawerOpen, refreshTasks, taskHistoryItems, tasks, toasts],
+    [activeTaskIds.length, addTask, dismissToast, drawerOpen, notify, refreshTasks, taskHistoryItems, tasks, toasts],
   );
 
   return <TaskCenterContext.Provider value={value}>{children}</TaskCenterContext.Provider>;

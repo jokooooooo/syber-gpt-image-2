@@ -32,6 +32,7 @@ import {
 } from '../imageOptions';
 import { createReferenceEntry, DEFAULT_REFERENCE_ROLE, REFERENCE_ROLE_OPTIONS, ReferenceImageEntry } from '../referenceImages';
 import { useAuth } from '../auth';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
@@ -41,6 +42,7 @@ export default function Ecommerce() {
   const { viewer } = useAuth();
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
+  const { notifyError, notifySuccess, notifyInfo } = useNotifier();
   const [productImage, setProductImage] = useState<File | null>(null);
   const [productPreview, setProductPreview] = useState<{ name: string; url: string } | null>(null);
   const [productReferenceRole, setProductReferenceRole] = useState(DEFAULT_REFERENCE_ROLE);
@@ -73,8 +75,6 @@ export default function Ecommerce() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [editReferenceDragging, setEditReferenceDragging] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editReferenceInputRef = useRef<HTMLInputElement>(null);
   const productReferenceInputRef = useRef<HTMLInputElement>(null);
@@ -135,11 +135,11 @@ export default function Ecommerce() {
       const data = await getHistory({ limit: 100 });
       setHistoryItems(data.items.filter((item) => Boolean(item.task_request?.ecommerce)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [notifyError]);
 
   useEffect(() => {
     loadHistory().catch(() => undefined);
@@ -156,40 +156,38 @@ export default function Ecommerce() {
     (files: File[]) => {
       const image = files.find((file) => IMAGE_TYPES.includes(file.type));
       if (!image) {
-        setError(t('home_ref_image_invalid'));
+        notifyError(t('home_ref_image_invalid'));
         return;
       }
       setProductImage(image);
-      setError('');
-      setMessage(t('home_ecom_image_ready'));
+      const readyMessage = t('home_ecom_image_ready');
+      notifySuccess(readyMessage);
     },
-    [t],
+    [notifyError, notifySuccess, t],
   );
 
   const addEditReferenceFiles = useCallback(
     (files: File[]) => {
       const images = files.filter((file) => IMAGE_TYPES.includes(file.type));
       if (images.length === 0) {
-        setError(t('home_ref_image_invalid'));
+        notifyError(t('home_ref_image_invalid'));
         return;
       }
       setEditReferences((current) => [...current, ...images.map((file) => createReferenceEntry(file, '风格参考'))].slice(0, 6));
-      setError('');
     },
-    [t],
+    [notifyError, t],
   );
 
   const addProductReferenceFiles = useCallback(
     (files: File[]) => {
       const images = files.filter((file) => IMAGE_TYPES.includes(file.type));
       if (images.length === 0) {
-        setError(t('home_ref_image_invalid'));
+        notifyError(t('home_ref_image_invalid'));
         return;
       }
       setProductReferences((current) => [...current, ...images.map((file) => createReferenceEntry(file, '侧面'))].slice(0, 8));
-      setError('');
     },
-    [t],
+    [notifyError, t],
   );
 
   function handleProductImageChange(event: ChangeEvent<HTMLInputElement>) {
@@ -247,16 +245,16 @@ export default function Ecommerce() {
 
   async function handleSubmit() {
     if (!productImage || loading) {
-      if (!productImage) setError(t('home_ecom_missing_image'));
+      if (!productImage) notifyError(t('home_ecom_missing_image'));
       return;
     }
     if (!viewer?.authenticated) {
-      setError(t('ecom_generation_login_required'));
+      notifyError(t('ecom_generation_login_required'));
       return;
     }
     setLoading(true);
-    setError('');
-    setMessage(t('home_ecom_sent'));
+    const sentMessage = t('home_ecom_sent');
+    notifyInfo(sentMessage);
     try {
       const task = await generateEcommerceImages(
         {
@@ -288,10 +286,10 @@ export default function Ecommerce() {
       );
       addTask(task);
       openDrawer();
-      setMessage(t('home_message_processing'));
+      const nextMessage = task.status === 'queued' ? t('home_message_queued') : t('home_message_processing');
+      notifyInfo(nextMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setMessage('');
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -327,7 +325,7 @@ export default function Ecommerce() {
     setImageQuality(group.first.quality || 'auto');
     setImageCount(String(Math.max(1, Math.min(9, group.images.length || group.items.length || 1))));
     setSelectedGroupKey(group.key);
-    setMessage(t('ecom_form_restored'));
+    notifyInfo(t('ecom_form_restored'));
 
     if (!group.first.input_image_url) {
       setProductImage(null);
@@ -360,7 +358,6 @@ export default function Ecommerce() {
   async function submitEdit() {
     if (!editingItem || !editPrompt.trim()) return;
     setLoading(true);
-    setError('');
     try {
       const task = await editHistoryImage(editingItem.id, {
         prompt: editPrompt.trim(),
@@ -377,9 +374,10 @@ export default function Ecommerce() {
       setEditingItem(null);
       setEditPrompt('');
       setEditReferences([]);
-      setMessage(t('home_message_edit_sent'));
+      const editMessage = t('home_message_edit_sent');
+      notifyInfo(editMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -387,18 +385,19 @@ export default function Ecommerce() {
 
   async function copyPrompt(prompt: string) {
     await copyTextToClipboard(prompt);
-    setMessage(t('home_prompt_copied'));
+    const copiedMessage = t('home_prompt_copied');
+    notifySuccess(copiedMessage);
   }
 
   async function copyPublishText(text: string) {
     await copyTextToClipboard(text);
-    setMessage(t('ecom_publish_copied'));
+    const copiedMessage = t('ecom_publish_copied');
+    notifySuccess(copiedMessage);
   }
 
   async function generatePublishCopy(group: HistoryGroup) {
     const ecommerce = group.first.task_request?.ecommerce;
     setPublishCopyLoadingKey(group.key);
-    setError('');
     try {
       const copy = await generateEcommercePublishCopy({
         product_name: ecommerce?.product_name || group.title,
@@ -413,9 +412,10 @@ export default function Ecommerce() {
         aspect_ratio: group.first.aspect_ratio,
       });
       setPublishCopies((current) => ({ ...current, [group.key]: copy }));
-      setMessage(t('ecom_publish_generated'));
+      const generatedMessage = t('ecom_publish_generated');
+      notifySuccess(generatedMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setPublishCopyLoadingKey(null);
     }
@@ -444,9 +444,6 @@ export default function Ecommerce() {
           </button>
         </div>
       </div>
-
-      {error ? <div className="mb-4 border border-error/40 bg-error/10 p-3 text-xs text-error">{error}</div> : null}
-      {message ? <div className="mb-4 border border-primary/25 bg-primary/5 p-3 text-xs uppercase tracking-widest text-primary">{message}</div> : null}
 
       <section
         className={`mb-8 grid grid-cols-1 gap-3 border bg-black/55 p-3 transition-colors lg:grid-cols-[220px_1fr_auto] ${
@@ -493,7 +490,8 @@ export default function Ecommerce() {
                 type="button"
                 onClick={() => {
                   setProductImage(null);
-                  setMessage(t('home_ecom_image_removed'));
+                  const removedMessage = t('home_ecom_image_removed');
+                  notifyInfo(removedMessage);
                 }}
               >
                 <X size={14} />
@@ -605,7 +603,7 @@ export default function Ecommerce() {
           <ProjectDetail
             group={selectedGroup}
             onPreview={setPreviewItem}
-            onDeleteItem={(item) => handleDeleteItem(item).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
+            onDeleteItem={(item) => handleDeleteItem(item).catch(notifyError)}
             onEdit={beginEdit}
             onCopy={(prompt) => copyPrompt(prompt).catch(() => undefined)}
             onCopyText={(text) => copyPublishText(text).catch(() => undefined)}
@@ -630,8 +628,8 @@ export default function Ecommerce() {
                 <ProjectCard
                   key={group.key}
                   group={group}
-                  onOpen={() => openProject(group).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
-                  onDelete={() => handleDeleteGroup(group).catch((err) => setError(err instanceof Error ? err.message : String(err)))}
+                  onOpen={() => openProject(group).catch(notifyError)}
+                  onDelete={() => handleDeleteGroup(group).catch(notifyError)}
                   t={t}
                 />
               ))}

@@ -6,6 +6,7 @@ import { useAuth } from '../auth';
 import { copyTextToClipboard } from '../clipboard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 const FAVORITE_PAGE_SIZE = 24;
@@ -14,6 +15,7 @@ const PROMPT_TRANSFER_KEY = 'joko_pending_prompt';
 export default function Favorites() {
   const { viewer } = useAuth();
   const { t } = useSite();
+  const { notifyError, notifySuccess } = useNotifier();
   const navigate = useNavigate();
   const [items, setItems] = useState<InspirationItem[]>([]);
   const [query, setQuery] = useState('');
@@ -21,7 +23,6 @@ export default function Favorites() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [removingIds, setRemovingIds] = useState<string[]>([]);
-  const [error, setError] = useState('');
   const [previewItem, setPreviewItem] = useState<InspirationItem | null>(null);
 
   async function load(nextOffset = 0, append = false) {
@@ -29,7 +30,6 @@ export default function Favorites() {
       return;
     }
     setLoading(true);
-    setError('');
     try {
       const data = await getFavoriteInspirations({
         limit: FAVORITE_PAGE_SIZE,
@@ -40,7 +40,7 @@ export default function Favorites() {
       setOffset(nextOffset + data.items.length);
       setTotal(Number(data.total ?? data.items.length));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -51,14 +51,14 @@ export default function Favorites() {
   }, [viewer?.owner_id]);
 
   async function handleUnfavorite(item: InspirationItem) {
-    setError('');
     setRemovingIds((current) => (current.includes(item.id) ? current : [...current, item.id]));
     try {
       await unfavoriteInspiration(item.id);
       setItems((current) => current.filter((favorite) => favorite.id !== item.id));
       setTotal((current) => Math.max(0, current - 1));
+      notifySuccess(t('home_favorite_removed'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setRemovingIds((current) => current.filter((id) => id !== item.id));
     }
@@ -122,8 +122,6 @@ export default function Favorites() {
           </button>
         </div>
       </div>
-
-      {error ? <div className="mb-6 border border-error/40 bg-error/10 p-4 text-xs text-error">{error}</div> : null}
 
       {loading && items.length === 0 ? (
         <div className="flex min-h-[320px] items-center justify-center gap-3 border border-primary/20 bg-black/50 text-xs uppercase tracking-[0.3em] text-primary/70">

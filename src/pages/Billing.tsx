@@ -2,15 +2,16 @@ import { useEffect, useState } from 'react';
 import { Activity, ArrowRight, CreditCard } from 'lucide-react';
 import { BalanceInfo, LedgerEntry, formatBalance, formatDate, getBalance, getLedger } from '../api';
 import { useAuth } from '../auth';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 export default function Billing() {
   const { viewer } = useAuth();
   const { t } = useSite();
+  const { notifyError } = useNotifier();
   const rechargeUrl = 'https://ai.get-money.locker';
   const [balance, setBalance] = useState<BalanceInfo>();
   const [ledger, setLedger] = useState<LedgerEntry[]>([]);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     Promise.all([getBalance(), getLedger(50)])
@@ -18,8 +19,8 @@ export default function Billing() {
         setBalance(balanceData);
         setLedger(ledgerData.items);
       })
-      .catch((err) => setError(err.message));
-  }, [viewer?.owner_id]);
+      .catch(notifyError);
+  }, [viewer?.owner_id, notifyError]);
 
   return (
     <div className="md:ml-64 px-6 md:px-12 py-8 max-w-[1440px] mx-auto min-h-screen pt-24 pb-12 bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
@@ -29,8 +30,6 @@ export default function Billing() {
         </div>
         <h1 className="text-4xl md:text-5xl text-on-surface font-bold tracking-tighter">{t('billing_title')}</h1>
       </div>
-
-      {error && <div className="mb-6 border border-error/40 bg-error/10 p-4 text-error text-xs">{error}</div>}
 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="lg:col-span-1 bg-black border border-secondary/30 p-6">

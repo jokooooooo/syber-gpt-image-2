@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import MasonryGrid from '../components/MasonryGrid';
 import { groupHistoryItems, HistoryGroup, mergeHistoryItems } from '../historyGroups';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
@@ -33,6 +34,7 @@ export default function History() {
   const { viewer } = useAuth();
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
+  const { notifyError } = useNotifier();
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [removedIds, setRemovedIds] = useState<string[]>([]);
   const [query, setQuery] = useState('');
@@ -40,11 +42,9 @@ export default function History() {
   const [previewItem, setPreviewItem] = useState<{ imageUrl: string | null; prompt: string } | null>(null);
   const [publishingIds, setPublishingIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   async function load(nextOffset = 0, append = false) {
     setLoading(true);
-    setError('');
     try {
       const data = await getHistory({ limit: 24, offset: nextOffset, q: query });
       if (!append) {
@@ -56,7 +56,7 @@ export default function History() {
       }
       setOffset(nextOffset + data.items.length);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -76,7 +76,6 @@ export default function History() {
   async function handleRegenerate(group: HistoryGroup) {
     const item = group.first;
     setLoading(true);
-    setError('');
     try {
       const submittedTask = await generateImage({
         prompt: item.prompt,
@@ -88,7 +87,7 @@ export default function History() {
       addTask(submittedTask);
       openDrawer();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -110,7 +109,6 @@ export default function History() {
     if (targets.length === 0) {
       return;
     }
-    setError('');
     setPublishingIds((current) => (current.includes(group.key) ? current : [...current, group.key]));
     try {
       const results = await Promise.all(
@@ -120,7 +118,7 @@ export default function History() {
         replaceHistoryItem(result.item);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setPublishingIds((current) => current.filter((id) => id !== group.key));
     }
@@ -160,8 +158,6 @@ export default function History() {
           </button>
         </div>
       </div>
-
-      {error && <div className="mb-6 border border-error/40 bg-error/10 p-4 text-error text-xs">{error}</div>}
 
       <MasonryGrid
         items={visibleGroups}

@@ -3,17 +3,18 @@ import { Activity, Database, Server, UserCircle } from 'lucide-react';
 import { AccountInfo, formatBalance, formatDate, getAccount } from '../api';
 import { useAuth } from '../auth';
 import AvatarBadge from '../components/AvatarBadge';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 export default function Account() {
   const { viewer } = useAuth();
   const { t } = useSite();
+  const { notifyError } = useNotifier();
   const [account, setAccount] = useState<AccountInfo | null>(null);
-  const [error, setError] = useState('');
 
   useEffect(() => {
-    getAccount().then(setAccount).catch((err) => setError(err.message));
-  }, [viewer?.owner_id]);
+    getAccount().then(setAccount).catch(notifyError);
+  }, [viewer?.owner_id, notifyError]);
 
   return (
     <div className="md:ml-64 px-6 md:px-12 py-8 max-w-[1440px] mx-auto min-h-screen pt-24 pb-12 bg-[radial-gradient(ellipse_at_top,var(--color-surface-container-high),var(--color-background))] font-mono">
@@ -23,8 +24,6 @@ export default function Account() {
         </div>
         <h1 className="text-4xl md:text-5xl text-on-surface font-bold tracking-tighter">{t('account_title')}</h1>
       </div>
-
-      {error && <div className="mb-6 border border-error/40 bg-error/10 p-4 text-error text-xs">{error}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <section className="lg:col-span-2 bg-black border border-primary/20 p-6">

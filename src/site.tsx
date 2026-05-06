@@ -312,6 +312,9 @@ const translations = {
     tasks_status_failed: '失败',
     tasks_toast_succeeded: '任务完成',
     tasks_toast_failed: '任务失败',
+    toast_success: '操作成功',
+    toast_error: '操作失败',
+    toast_info: '提示',
   },
   'en-US': {
     top_history: 'History',
@@ -604,6 +607,9 @@ const translations = {
     tasks_status_failed: 'Failed',
     tasks_toast_succeeded: 'Task Complete',
     tasks_toast_failed: 'Task Failed',
+    toast_success: 'Success',
+    toast_error: 'Error',
+    toast_info: 'Notice',
   },
 } as const;
 

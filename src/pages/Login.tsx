@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Loader2, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { PublicAuthSettings, getAuthPublicSettings, loginAccount, loginAccount2FA } from '../api';
 import { useAuth } from '../auth';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 export default function Login() {
   const navigate = useNavigate();
   const { viewer, setViewer } = useAuth();
   const { t } = useSite();
+  const { notifyError } = useNotifier();
   const [settings, setSettings] = useState<PublicAuthSettings | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,7 +18,6 @@ export default function Login() {
   const [totpCode, setTotpCode] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     getAuthPublicSettings().then(setSettings).catch(() => setSettings(null));
@@ -31,7 +32,6 @@ export default function Login() {
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setLoading(true);
-    setError('');
     try {
       if (tempToken) {
         const result = await loginAccount2FA({ temp_token: tempToken, totp_code: totpCode.trim() });
@@ -56,7 +56,7 @@ export default function Login() {
         navigate('/account', { replace: true });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setLoading(false);
     }
@@ -76,12 +76,6 @@ export default function Login() {
             ? t('login_desc_2fa', { value: maskedEmail })
             : t('login_desc')}
         </p>
-
-        {error && (
-          <div className="mb-6 border border-error/40 bg-error/10 p-4 text-xs text-error">
-            {error}
-          </div>
-        )}
 
         <form className="space-y-5" onSubmit={handleSubmit}>
           {!tempToken && (

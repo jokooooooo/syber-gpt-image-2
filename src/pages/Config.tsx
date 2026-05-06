@@ -19,6 +19,7 @@ import {
 } from '../api';
 import { useAuth } from '../auth';
 import AvatarBadge from '../components/AvatarBadge';
+import { useNotifier } from '../notifications';
 import { useSite } from '../site';
 
 type LocaleValue = 'zh-CN' | 'en-US';
@@ -30,6 +31,7 @@ function normalizeLocale(locale: string | undefined): LocaleValue {
 export default function Config() {
   const { viewer } = useAuth();
   const { setLocale, siteSettings, refreshSiteSettings, t } = useSite();
+  const { notifyError, notifySuccess } = useNotifier();
   const isAdmin = Boolean(siteSettings?.viewer.is_admin);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -53,8 +55,6 @@ export default function Config() {
     provider_base_url: '',
     auth_base_url: '',
   });
-  const [status, setStatus] = useState('');
-  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [siteSaving, setSiteSaving] = useState(false);
 
@@ -72,8 +72,8 @@ export default function Config() {
   }
 
   useEffect(() => {
-    refresh().catch((err) => setError(err.message));
-  }, [viewer?.owner_id, isAdmin]);
+    refresh().catch(notifyError);
+  }, [viewer?.owner_id, isAdmin, notifyError]);
 
   useEffect(() => {
     if (!siteSettings) {
@@ -102,8 +102,6 @@ export default function Config() {
     event.preventDefault();
     if (!config) return;
     setSaving(true);
-    setError('');
-    setStatus('');
     try {
       const payload = isAdmin
         ? {
@@ -120,9 +118,9 @@ export default function Config() {
       setConfig(updated);
       setApiKey('');
       await refresh();
-      setStatus(t('config_status_saved'));
+      notifySuccess(t('config_status_saved'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSaving(false);
     }
@@ -130,13 +128,11 @@ export default function Config() {
 
   async function handleTest() {
     setSaving(true);
-    setError('');
-    setStatus('');
     try {
       const result = await testConfig();
-      setStatus(t('config_status_connected', { value: result.models.slice(0, 3).join(', ') || 'MODELS OK' }));
+      notifySuccess(t('config_status_connected', { value: result.models.slice(0, 3).join(', ') || 'MODELS OK' }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSaving(false);
     }
@@ -144,14 +140,12 @@ export default function Config() {
 
   async function handleSyncInspirations() {
     setSaving(true);
-    setError('');
-    setStatus('');
     try {
       const result = await syncInspirations();
       await refresh();
-      setStatus(t('config_status_synced', { value: result.parsed }));
+      notifySuccess(t('config_status_synced', { value: result.parsed }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSaving(false);
     }
@@ -160,16 +154,14 @@ export default function Config() {
   async function handleResetKey() {
     if (!config?.managed_by_auth) return;
     setSaving(true);
-    setError('');
-    setStatus('');
     try {
       const updated = await saveConfig({ clear_api_key: true });
       setConfig(updated);
       setApiKey('');
       await refresh();
-      setStatus(t('config_status_restored'));
+      notifySuccess(t('config_status_restored'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSaving(false);
     }
@@ -178,8 +170,6 @@ export default function Config() {
   async function handleSaveSiteSettings() {
     if (!isAdmin) return;
     setSiteSaving(true);
-    setError('');
-    setStatus('');
     try {
       const updated = await updateSiteSettings({
         default_locale: siteDraft.default_locale,
@@ -195,9 +185,9 @@ export default function Config() {
       });
       setLocale(normalizeLocale(updated.default_locale));
       await refreshSiteSettings();
-      setStatus(t('config_status_site_saved'));
+      notifySuccess(t('config_status_site_saved'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setSiteSaving(false);
     }
@@ -241,12 +231,6 @@ export default function Config() {
           </div>
         </div>
       </section>
-
-      {(error || status) && (
-        <div className={`mb-6 border p-4 text-xs ${error ? 'border-error/40 bg-error/10 text-error' : 'border-tertiary/40 bg-tertiary/10 text-tertiary'}`}>
-          {error || status}
-        </div>
-      )}
 
       {!config?.managed_by_auth && (
         <div className="mb-6 border border-primary/20 bg-primary/5 p-4 text-xs text-white/60 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">

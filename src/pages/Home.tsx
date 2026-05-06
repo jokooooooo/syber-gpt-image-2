@@ -24,6 +24,7 @@ import PromptEditorModal from '../components/PromptEditorModal';
 import { useHomeFeed } from '../homeFeed';
 import { groupHistoryItems, mergeHistoryItems } from '../historyGroups';
 import { createReferenceEntry, REFERENCE_ROLE_OPTIONS, ReferenceImageEntry } from '../referenceImages';
+import { useNotifier } from '../notifications';
 import {
   ASPECT_RATIO_OPTIONS,
   IMAGE_COUNT_OPTIONS,
@@ -71,6 +72,7 @@ export default function Home() {
   const { viewer } = useAuth();
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
+  const { notifyError, notifySuccess, notifyInfo } = useNotifier();
   const { state: feedState, patchState, setState: setFeedState } = useHomeFeed();
   const [promptValue, setPromptValue] = useState('');
   const [promptInstruction, setPromptInstruction] = useState('');
@@ -90,7 +92,6 @@ export default function Home() {
   const [favoritePendingIds, setFavoritePendingIds] = useState<string[]>([]);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const {
@@ -168,7 +169,6 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     const ownerId = viewer?.owner_id || '';
-    setError('');
     const query = inspirationQuery || undefined;
     if (
       feedState.initialized &&
@@ -211,7 +211,7 @@ export default function Home() {
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err.message);
+          notifyError(err);
         }
       })
       .finally(() => {
@@ -232,6 +232,7 @@ export default function Home() {
     feedState.loadedSearchMode,
     inspirationQuery,
     inspirationSearchMode,
+    notifyError,
     patchState,
     viewer?.owner_id,
   ]);
@@ -262,7 +263,7 @@ export default function Home() {
         };
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       patchState({ loadingMoreFeed: false });
     }
@@ -275,6 +276,7 @@ export default function Home() {
     inspirationSearchMode,
     inspirationTotal,
     loadingMoreFeed,
+    notifyError,
     patchState,
     setFeedState,
   ]);
@@ -314,11 +316,10 @@ export default function Home() {
     if (loading) return;
     if (!viewer?.authenticated) {
       setGenerationPanelExpanded(true);
-      setError(t('home_generation_login_required'));
+      notifyError(t('home_generation_login_required'));
       return;
     }
     setLoading(true);
-    setError('');
     const requestedImageCount = Math.max(1, Math.min(9, Number(imageCount) || 1));
     const imageOptions = {
       size: providerImageSize(imageScale, aspectRatio),
@@ -327,7 +328,9 @@ export default function Home() {
     };
     try {
       const isEditMode = selectedReferences.length > 0;
-      setMessage(isEditMode ? t('home_message_edit_sent') : t('home_message_generate_sent'));
+      const sentMessage = isEditMode ? t('home_message_edit_sent') : t('home_message_generate_sent');
+      setMessage(sentMessage);
+      notifyInfo(sentMessage);
       const submittedTask = isEditMode
         ? await editImage(
             { prompt, ...imageOptions, n: requestedImageCount },
@@ -341,9 +344,11 @@ export default function Home() {
       setSelectedReferences([]);
       addTask(submittedTask);
       openDrawer();
-      setMessage(submittedTask.status === 'running' ? t('home_message_processing') : t('home_message_queued'));
+      const nextMessage = submittedTask.status === 'running' ? t('home_message_processing') : t('home_message_queued');
+      setMessage(nextMessage);
+      notifyInfo(nextMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
       setMessage('');
     } finally {
       setLoading(false);
@@ -353,12 +358,13 @@ export default function Home() {
   async function handleOptimizePrompt() {
     const prompt = promptValue.trim();
     if (!prompt || optimizingPrompt) {
-      if (!prompt) setError(t('home_prompt_optimizer_empty'));
+      if (!prompt) notifyError(t('home_prompt_optimizer_empty'));
       return;
     }
     setOptimizingPrompt(true);
-    setError('');
-    setMessage(t('home_optimizing_prompt'));
+    const optimizingMessage = t('home_optimizing_prompt');
+    setMessage(optimizingMessage);
+    notifyInfo(optimizingMessage);
     try {
       const result = await optimizePrompt({
         prompt,
@@ -368,9 +374,11 @@ export default function Home() {
         quality: imageQuality,
       });
       setPromptValue(result.prompt);
-      setMessage(t('home_prompt_optimized'));
+      const optimizedMessage = t('home_prompt_optimized');
+      setMessage(optimizedMessage);
+      notifySuccess(optimizedMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
       setMessage('');
     } finally {
       setOptimizingPrompt(false);
@@ -383,7 +391,6 @@ export default function Home() {
       return;
     }
     setAiSearching(true);
-    setError('');
     patchState({
       inspirationSearchMode: 'ai',
       inspirationQuery: query,
@@ -405,10 +412,9 @@ export default function Home() {
   async function handleToggleFavorite(item: FeedItem) {
     if (!item.inspirationId) return;
     if (!viewer?.authenticated) {
-      setError(t('home_favorite_login_required'));
+      notifyError(t('home_favorite_login_required'));
       return;
     }
-    setError('');
     setFavoritePendingIds((current) => (current.includes(item.inspirationId!) ? current : [...current, item.inspirationId!]));
     try {
       const result = item.favorited
@@ -418,9 +424,11 @@ export default function Home() {
         ...current,
         inspirations: current.inspirations.map((inspiration) => (inspiration.id === result.item.id ? result.item : inspiration)),
       }));
-      setMessage(result.item.favorited ? t('home_favorite_saved') : t('home_favorite_removed'));
+      const favoriteMessage = result.item.favorited ? t('home_favorite_saved') : t('home_favorite_removed');
+      setMessage(favoriteMessage);
+      notifySuccess(favoriteMessage);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      notifyError(err);
     } finally {
       setFavoritePendingIds((current) => current.filter((id) => id !== item.inspirationId));
     }
@@ -430,7 +438,9 @@ export default function Home() {
     setPromptValue(prompt);
     setGenerationPanelExpanded(true);
     await copyTextToClipboard(prompt);
-    setMessage(t('home_prompt_copied'));
+    const copiedMessage = t('home_prompt_copied');
+    setMessage(copiedMessage);
+    notifySuccess(copiedMessage);
   }
 
   async function handleCopyPrompt() {
@@ -438,7 +448,9 @@ export default function Home() {
       return;
     }
     await copyTextToClipboard(promptValue);
-    setMessage(t('home_prompt_copied'));
+    const copiedMessage = t('home_prompt_copied');
+    setMessage(copiedMessage);
+    notifySuccess(copiedMessage);
   }
 
   const mergedHistory = mergeHistoryItems([
@@ -471,14 +483,16 @@ export default function Home() {
     (files: File[]) => {
       const imageFiles = getDroppedImages(files);
       if (imageFiles.length === 0) {
-        setError(t('home_ref_image_invalid'));
+        notifyError(t('home_ref_image_invalid'));
         return;
       }
       setSelectedReferences((current) => [...current, ...imageFiles.map((file) => createReferenceEntry(file))].slice(0, 8));
       setGenerationPanelExpanded(true);
-      setMessage(t('home_mode_edit'));
+      const editMessage = t('home_mode_edit');
+      setMessage(editMessage);
+      notifyInfo(editMessage);
     },
-    [t],
+    [notifyError, notifyInfo, t],
   );
   const handleReferenceImages = (event: ChangeEvent<HTMLInputElement>) => {
     addReferenceFiles(Array.from(event.target.files || []));
@@ -538,8 +552,6 @@ export default function Home() {
           </Link>
         </div>
       </div>
-
-      {error && <div className="mb-6 border border-error/40 bg-error/10 p-4 text-error text-xs">{error}</div>}
 
       <div className="mb-6 flex flex-col gap-3 border border-primary/20 bg-black/50 p-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
