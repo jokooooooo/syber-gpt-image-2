@@ -12,6 +12,7 @@ import {
   HistoryItem,
   InspirationItem,
   optimizePrompt,
+  searchInspirationsWithAI,
   unfavoriteInspiration,
 } from '../api';
 import { useAuth } from '../auth';
@@ -84,6 +85,7 @@ export default function Home() {
   const [generationPanelExpanded, setGenerationPanelExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [optimizingPrompt, setOptimizingPrompt] = useState(false);
+  const [aiSearching, setAiSearching] = useState(false);
   const [draggingReference, setDraggingReference] = useState(false);
   const [favoritePendingIds, setFavoritePendingIds] = useState<string[]>([]);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -101,6 +103,8 @@ export default function Home() {
     inspirationTotal,
     inspirationSearchInput,
     inspirationQuery,
+    inspirationSearchMode,
+    inspirationAIQuery,
   } = feedState;
 
   useEffect(() => {
@@ -145,11 +149,14 @@ export default function Home() {
   }, [aspectRatio, imageScale]);
 
   useEffect(() => {
+    if (inspirationSearchMode === 'ai') {
+      return;
+    }
     const handle = window.setTimeout(() => {
       patchState({ inspirationQuery: inspirationSearchInput.trim() });
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [inspirationSearchInput, patchState]);
+  }, [inspirationSearchInput, inspirationSearchMode, patchState]);
 
   useEffect(() => {
     const updateBackToTop = () => setShowBackToTop(window.scrollY > 720);
@@ -163,7 +170,12 @@ export default function Home() {
     const ownerId = viewer?.owner_id || '';
     setError('');
     const query = inspirationQuery || undefined;
-    if (feedState.initialized && feedState.loadedOwnerId === ownerId && feedState.loadedQuery === (query || '')) {
+    if (
+      feedState.initialized &&
+      feedState.loadedOwnerId === ownerId &&
+      feedState.loadedQuery === (query || '') &&
+      feedState.loadedSearchMode === inspirationSearchMode
+    ) {
       return () => {
         cancelled = true;
       };
@@ -176,10 +188,10 @@ export default function Home() {
       inspirationTotal: 0,
       inspirations: [],
     });
-    const task = Promise.all([
-      getHistory({ limit: 12 }),
-      getInspirations({ limit: FEED_PAGE_SIZE, offset: 0, q: query }),
-    ]);
+    const inspirationTask = inspirationSearchMode === 'ai' && query
+      ? searchInspirationsWithAI({ limit: FEED_PAGE_SIZE, offset: 0, query })
+      : getInspirations({ limit: FEED_PAGE_SIZE, offset: 0, q: query });
+    const task = Promise.all([getHistory({ limit: 12 }), inspirationTask]);
     task
       .then(([historyData, inspirationData]) => {
         if (cancelled) return;
@@ -192,6 +204,8 @@ export default function Home() {
           hasMoreInspirations: inspirationData.items.length < nextTotal,
           loadedOwnerId: ownerId,
           loadedQuery: query || '',
+          inspirationAIQuery: 'query' in inspirationData && inspirationSearchMode === 'ai' ? inspirationData.query : '',
+          loadedSearchMode: inspirationSearchMode,
           initialized: true,
         });
       })
@@ -203,12 +217,24 @@ export default function Home() {
       .finally(() => {
         if (!cancelled) {
           patchState({ feedLoading: false });
+          if (inspirationSearchMode === 'ai') {
+            setAiSearching(false);
+          }
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [feedState.initialized, feedState.loadedOwnerId, feedState.loadedQuery, inspirationQuery, patchState, viewer?.owner_id]);
+  }, [
+    feedState.initialized,
+    feedState.loadedOwnerId,
+    feedState.loadedQuery,
+    feedState.loadedSearchMode,
+    inspirationQuery,
+    inspirationSearchMode,
+    patchState,
+    viewer?.owner_id,
+  ]);
 
   const loadMoreInspirations = useCallback(async () => {
     if (feedLoading || loadingMoreFeed || !hasMoreInspirations) {
@@ -216,10 +242,11 @@ export default function Home() {
     }
     patchState({ loadingMoreFeed: true });
     try {
+      const query = inspirationSearchMode === 'ai' ? inspirationAIQuery || inspirationQuery || undefined : inspirationQuery || undefined;
       const data = await getInspirations({
         limit: FEED_PAGE_SIZE,
         offset: inspirationOffset,
-        q: inspirationQuery || undefined,
+        q: query,
       });
       setFeedState((current) => {
         const seen = new Set(current.inspirations.map((item) => item.id));
@@ -239,7 +266,18 @@ export default function Home() {
     } finally {
       patchState({ loadingMoreFeed: false });
     }
-  }, [feedLoading, hasMoreInspirations, inspirationOffset, inspirationQuery, inspirationTotal, loadingMoreFeed, patchState, setFeedState]);
+  }, [
+    feedLoading,
+    hasMoreInspirations,
+    inspirationAIQuery,
+    inspirationOffset,
+    inspirationQuery,
+    inspirationSearchMode,
+    inspirationTotal,
+    loadingMoreFeed,
+    patchState,
+    setFeedState,
+  ]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -274,6 +312,11 @@ export default function Home() {
     const prompt = promptValue.trim();
     if (!prompt) return;
     if (loading) return;
+    if (!viewer?.authenticated) {
+      setGenerationPanelExpanded(true);
+      setError(t('home_generation_login_required'));
+      return;
+    }
     setLoading(true);
     setError('');
     const requestedImageCount = Math.max(1, Math.min(9, Number(imageCount) || 1));
@@ -332,6 +375,31 @@ export default function Home() {
     } finally {
       setOptimizingPrompt(false);
     }
+  }
+
+  async function handleAISearch() {
+    const query = inspirationSearchInput.trim();
+    if (!query || aiSearching) {
+      return;
+    }
+    setAiSearching(true);
+    setError('');
+    patchState({
+      inspirationSearchMode: 'ai',
+      inspirationQuery: query,
+      inspirationAIQuery: '',
+      feedLoading: true,
+      initialized: false,
+    });
+  }
+
+  function setKeywordSearchMode() {
+    patchState({
+      inspirationSearchMode: 'keyword',
+      inspirationAIQuery: '',
+      inspirationQuery: inspirationSearchInput.trim(),
+      initialized: false,
+    });
   }
 
   async function handleToggleFavorite(item: FeedItem) {
@@ -473,33 +541,77 @@ export default function Home() {
 
       {error && <div className="mb-6 border border-error/40 bg-error/10 p-4 text-error text-xs">{error}</div>}
 
-      <div className="mb-6 flex flex-col gap-3 border border-primary/20 bg-black/50 p-3 md:flex-row md:items-center md:justify-between">
-        <label className="flex min-w-0 flex-1 items-center gap-3 border border-white/10 bg-surface-container-low/70 px-3 py-2 text-white/70 focus-within:border-primary">
-          <Search className="shrink-0 text-primary/70" size={16} />
-          <input
-            className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
-            value={inspirationSearchInput}
-            onChange={(event) => patchState({ inspirationSearchInput: event.target.value })}
-            placeholder={t('home_case_search')}
-          />
-          {inspirationSearchInput ? (
+      <div className="mb-6 flex flex-col gap-3 border border-primary/20 bg-black/50 p-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
+          <div className="grid h-10 shrink-0 grid-cols-2 border border-white/10 bg-surface-container-low/70 p-1">
             <button
-              className="flex h-7 w-7 shrink-0 items-center justify-center text-white/45 transition-colors hover:text-primary"
+              className={`px-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                inspirationSearchMode === 'keyword' ? 'bg-primary text-black' : 'text-white/55 hover:text-primary'
+              }`}
               type="button"
-              title={t('home_case_clear_search')}
-              aria-label={t('home_case_clear_search')}
-              onClick={() => {
-                patchState({ inspirationSearchInput: '', inspirationQuery: '' });
-              }}
+              onClick={setKeywordSearchMode}
             >
-              <X size={15} />
+              {t('home_case_search_keyword')}
             </button>
-          ) : null}
-        </label>
+            <button
+              className={`px-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${
+                inspirationSearchMode === 'ai' ? 'bg-secondary text-black' : 'text-white/55 hover:text-secondary'
+              }`}
+              type="button"
+              onClick={handleAISearch}
+              disabled={aiSearching || !inspirationSearchInput.trim()}
+            >
+              {aiSearching ? <Loader2 className="mx-auto animate-spin" size={14} /> : t('home_case_search_ai')}
+            </button>
+          </div>
+          <label className="flex min-w-0 flex-1 items-center gap-3 border border-white/10 bg-surface-container-low/70 px-3 py-2 text-white/70 focus-within:border-primary">
+            <Search className="shrink-0 text-primary/70" size={16} />
+            <input
+              className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
+              value={inspirationSearchInput}
+              onChange={(event) => {
+                patchState({ inspirationSearchInput: event.target.value });
+                if (inspirationSearchMode === 'ai') {
+                  patchState({ inspirationAIQuery: '' });
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && inspirationSearchMode === 'ai') {
+                  event.preventDefault();
+                  handleAISearch().catch(() => undefined);
+                }
+              }}
+              placeholder={t('home_case_search')}
+            />
+            {inspirationSearchInput ? (
+              <button
+                className="flex h-7 w-7 shrink-0 items-center justify-center text-white/45 transition-colors hover:text-primary"
+                type="button"
+                title={t('home_case_clear_search')}
+                aria-label={t('home_case_clear_search')}
+                onClick={() => {
+                  patchState({
+                    inspirationSearchInput: '',
+                    inspirationQuery: '',
+                    inspirationAIQuery: '',
+                    inspirationSearchMode: 'keyword',
+                    initialized: false,
+                  });
+                }}
+              >
+                <X size={15} />
+              </button>
+            ) : null}
+          </label>
+        </div>
         <div className="shrink-0 font-code-data text-[10px] uppercase tracking-[0.24em] text-white/40">
-          {inspirationQuery
-            ? t('home_case_search_results', { total: inspirationTotal })
-            : t('home_case_total', { total: inspirationTotal })}
+          {aiSearching
+            ? t('home_case_ai_searching')
+            : inspirationSearchMode === 'ai' && inspirationAIQuery
+              ? t('home_case_ai_query', { value: inspirationAIQuery })
+              : inspirationQuery
+                ? t('home_case_search_results', { total: inspirationTotal })
+                : t('home_case_total', { total: inspirationTotal })}
         </div>
       </div>
 

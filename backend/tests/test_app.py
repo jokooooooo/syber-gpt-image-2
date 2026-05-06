@@ -51,6 +51,22 @@ class FakeProvider:
         self.chat_configs.append(dict(config))
         self.chat_payloads.append(payload)
         system_content = payload["messages"][0]["content"] if payload.get("messages") else ""
+        if "案例库搜索助手" in system_content:
+            return {
+                "id": "chatcmpl-ai-search-test",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {"query": "赛博 城市 夜景", "keywords": ["赛博", "城市", "夜景"]},
+                                ensure_ascii=False,
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"total_tokens": 8},
+            }
         if "电商商品图识别分析师" in system_content:
             return {
                 "id": "chatcmpl-ecommerce-vision-test",
@@ -175,6 +191,7 @@ class FakeAuthClient:
         self.login_base_urls: list[str] = []
         self.login_2fa_base_urls: list[str] = []
         self.list_keys_base_urls: list[str] = []
+        self.list_available_groups_base_urls: list[str] = []
         self.create_key_base_urls: list[str] = []
         self.list_usage_base_urls: list[str] = []
         self.created_keys: list[dict[str, Any]] = []
@@ -232,7 +249,12 @@ class FakeAuthClient:
         return []
 
     async def list_available_groups(self, base_url: str, access_token: str) -> list[dict[str, Any]]:
-        raise AssertionError("Direct Sub2API mode should not require a dedicated image group")
+        self.list_available_groups_base_urls.append(base_url)
+        return [
+            {"id": 11, "name": "openai-default", "platform": "openai", "status": "active"},
+            {"id": 12, "name": "codex_plus", "platform": "openai", "status": "active"},
+            {"id": 13, "name": "team", "platform": "openai", "status": "active"},
+        ]
 
     async def create_key(self, base_url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
         self.create_key_base_urls.append(base_url)
@@ -292,6 +314,12 @@ def make_client(
     provider: FakeProvider | None = None,
 ) -> TestClient:
     return TestClient(make_app(tmp_path, auth_client=auth_client, provider=provider))
+
+
+def login_demo_user(client: TestClient) -> dict[str, Any]:
+    response = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "secret123"})
+    assert response.status_code == 200
+    return response.json()
 
 
 def wait_for_task(client: TestClient, task_id: str, attempts: int = 60, delay: float = 0.02) -> dict[str, Any]:
@@ -383,10 +411,19 @@ def test_ecommerce_publish_copy_uses_current_provider_key(tmp_path: Path) -> Non
         assert "可定做尺寸" in chat_payload["messages"][1]["content"]
 
 
-def test_guest_history_is_isolated_by_cookie(tmp_path: Path) -> None:
+def test_guest_generation_requires_login(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+
+        response = client.post("/api/images/generate", json={"prompt": "neon city"})
+
+        assert response.status_code == 401
+
+
+def test_signed_in_history_is_isolated_by_cookie(tmp_path: Path) -> None:
     app = make_app(tmp_path)
     with TestClient(app) as client_a, TestClient(app) as client_b:
-        client_a.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client_a)
         generated = client_a.post("/api/images/generate", json={"prompt": "neon city"})
         assert generated.status_code == 200
         task = wait_for_task(client_a, generated.json()["id"])
@@ -411,7 +448,7 @@ def test_guest_history_is_isolated_by_cookie(tmp_path: Path) -> None:
 def test_generation_passes_resolution_ratio_and_quality(tmp_path: Path) -> None:
     app = make_app(tmp_path)
     with TestClient(app) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         generated = client.post(
             "/api/images/generate",
@@ -433,7 +470,7 @@ def test_generation_passes_resolution_ratio_and_quality(tmp_path: Path) -> None:
 def test_generation_fans_out_multi_image_requests_into_one_task(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         generated = client.post(
             "/api/images/generate",
@@ -474,7 +511,7 @@ def test_generation_fans_out_multi_image_requests_into_one_task(tmp_path: Path) 
 def test_generation_retries_retryable_upstream_errors(tmp_path: Path) -> None:
     provider = FlakyProvider(generate_failures=2)
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         generated = client.post("/api/images/generate", json={"prompt": "retryable cup"})
 
@@ -488,7 +525,8 @@ def test_generation_retries_retryable_upstream_errors(tmp_path: Path) -> None:
 def test_generation_records_nonzero_ledger_amount(tmp_path: Path) -> None:
     app = make_app(tmp_path)
     with TestClient(app) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
+        client.put("/api/config", json={"api_key": "sk-shared-bonus-654321"})
 
         generated = client.post(
             "/api/images/generate",
@@ -573,7 +611,7 @@ def test_image_size_presets_follow_provider_limits() -> None:
 
 def test_edit_persists_upload_and_result(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/images/edit",
@@ -599,7 +637,7 @@ def test_edit_persists_upload_and_result(tmp_path: Path) -> None:
 def test_edit_reference_notes_are_sent_to_provider_and_history(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/images/edit",
@@ -633,7 +671,7 @@ def test_edit_reference_notes_are_sent_to_provider_and_history(tmp_path: Path) -
 def test_edit_fans_out_multi_image_requests_with_series_prompts(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/images/edit",
@@ -661,7 +699,7 @@ def test_edit_fans_out_multi_image_requests_with_series_prompts(tmp_path: Path) 
 def test_ecommerce_generate_analyzes_product_and_creates_series_edit_task(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/ecommerce/generate",
@@ -706,7 +744,7 @@ def test_ecommerce_generate_analyzes_product_and_creates_series_edit_task(tmp_pa
 def test_ecommerce_generate_analyzes_all_reference_angles(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/ecommerce/generate",
@@ -756,7 +794,7 @@ def test_ecommerce_generate_analyzes_all_reference_angles(tmp_path: Path) -> Non
 def test_history_item_can_be_used_as_single_edit_source(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
         generated = client.post("/api/images/generate", json={"prompt": "original product", "size": "1K", "aspect_ratio": "1:1"})
         source_task = wait_for_task(client, generated.json()["id"])
         source_item = source_task["items"][0]
@@ -780,7 +818,7 @@ def test_history_item_can_be_used_as_single_edit_source(tmp_path: Path) -> None:
 def test_ecommerce_history_edit_uses_product_current_and_extra_references(tmp_path: Path) -> None:
     provider = FakeProvider()
     with make_client(tmp_path, provider=provider) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
 
         response = client.post(
             "/api/ecommerce/generate",
@@ -833,7 +871,7 @@ def test_ecommerce_history_edit_uses_product_current_and_extra_references(tmp_pa
 
 def test_account_includes_balance_and_stats(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
         generated = client.post("/api/images/generate", json={"prompt": "one"})
         wait_for_task(client, generated.json()["id"])
 
@@ -843,12 +881,12 @@ def test_account_includes_balance_and_stats(tmp_path: Path) -> None:
         data = response.json()
         assert data["balance"]["remaining"] == 12.5
         assert data["stats"]["total"] == 1
-        assert data["viewer"]["authenticated"] is False
+        assert data["viewer"]["authenticated"] is True
 
 
 def test_user_can_publish_and_unpublish_history_as_public_case(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        login_demo_user(client)
         generated = client.post("/api/images/generate", json={"prompt": "public neon gallery"})
         task = wait_for_task(client, generated.json()["id"])
         history_id = task["items"][0]["id"]
@@ -924,21 +962,46 @@ def test_signed_in_user_can_favorite_public_cases(tmp_path: Path) -> None:
         assert client.get("/api/inspirations/favorites").json()["total"] == 0
 
 
-def test_login_binds_managed_key_and_merges_guest_history(tmp_path: Path) -> None:
+def test_ai_inspiration_search_keeps_keyword_search_separate(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        client.put("/api/config", json={"api_key": "sk-test-123456"})
+        db = client.app.state.db
+        db.upsert_inspirations(
+            "https://example.com/README.md",
+            [
+                {
+                    "id": "case-ai-1",
+                    "source_item_id": "case-ai-1",
+                    "section": "Gallery",
+                    "title": "赛博城市夜景",
+                    "author": "@demo",
+                    "prompt": "赛博 城市 夜景 霓虹雨夜",
+                    "image_url": "https://example.com/cyber.jpg",
+                    "source_link": "https://example.com/post",
+                    "raw": {},
+                }
+            ],
+        )
+
+        response = client.post("/api/inspirations/ai-search", json={"query": "找一些未来感城市夜景"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["query"] == "赛博 城市 夜景"
+        assert data["total"] == 1
+        assert data["items"][0]["id"] == "case-ai-1"
+        assert provider.chat_payloads[-1]["messages"][0]["content"].startswith("你是 JokoAI 的案例库搜索助手")
+
+
+def test_login_binds_managed_key_with_default_group(tmp_path: Path) -> None:
     auth = FakeAuthClient()
     with make_client(tmp_path, auth_client=auth) as client:
-        client.put("/api/config", json={"api_key": "sk-guest-123456"})
-        generated = client.post("/api/images/generate", json={"prompt": "guest prompt"})
-        task_id = generated.json()["id"]
-
         login = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "secret123"})
         assert login.status_code == 200
         assert login.json()["viewer"]["authenticated"] is True
         assert auth.created_keys and auth.created_keys[0]["name"] == "cybergen-image"
-        assert auth.created_keys[0]["group"]["id"] is None
-
-        task = wait_for_task(client, task_id)
-        assert task["status"] == "succeeded"
+        assert auth.created_keys[0]["group"]["id"] == 12
 
         config = client.get("/api/config").json()
         history = client.get("/api/history").json()["items"]
@@ -946,8 +1009,7 @@ def test_login_binds_managed_key_and_merges_guest_history(tmp_path: Path) -> Non
 
         assert config["managed_by_auth"] is True
         assert config["api_key_hint"] == "sk-use...3456"
-        assert len(history) == 1
-        assert history[0]["prompt"] == "guest prompt"
+        assert len(history) == 0
         assert account["viewer"]["user"]["email"] == "demo@example.com"
         assert account["user"]["api_key_source"] == "managed"
         assert account["viewer"]["user"]["role"] == "admin"
@@ -1200,3 +1262,14 @@ def test_manual_inspiration_sync_endpoint(tmp_path: Path) -> None:
         assert payload["total"] == 1
         item = payload["items"][0]
         assert item["title"] == "Mockup"
+
+
+def test_inspiration_sync_requires_admin(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        guest = client.post("/api/inspirations/sync")
+        assert guest.status_code == 401
+
+        login_demo_user(client)
+        response = client.post("/api/inspirations/sync")
+
+        assert response.status_code in {200, 502}

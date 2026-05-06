@@ -31,12 +31,14 @@ import {
   SIZE_OPTIONS,
 } from '../imageOptions';
 import { createReferenceEntry, DEFAULT_REFERENCE_ROLE, REFERENCE_ROLE_OPTIONS, ReferenceImageEntry } from '../referenceImages';
+import { useAuth } from '../auth';
 import { useSite } from '../site';
 import { useTasks } from '../tasks';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 export default function Ecommerce() {
+  const { viewer } = useAuth();
   const { t } = useSite();
   const { addTask, openDrawer, taskHistoryItems } = useTasks();
   const [productImage, setProductImage] = useState<File | null>(null);
@@ -246,6 +248,10 @@ export default function Ecommerce() {
   async function handleSubmit() {
     if (!productImage || loading) {
       if (!productImage) setError(t('home_ecom_missing_image'));
+      return;
+    }
+    if (!viewer?.authenticated) {
+      setError(t('ecom_generation_login_required'));
       return;
     }
     setLoading(true);

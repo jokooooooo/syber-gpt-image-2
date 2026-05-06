@@ -30,6 +30,7 @@ function normalizeLocale(locale: string | undefined): LocaleValue {
 export default function Config() {
   const { viewer } = useAuth();
   const { setLocale, siteSettings, refreshSiteSettings, t } = useSite();
+  const isAdmin = Boolean(siteSettings?.viewer.is_admin);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -62,7 +63,7 @@ export default function Config() {
       getConfig(),
       getAccount(),
       getLedger(8),
-      getInspirationStats(),
+      siteSettings?.viewer.is_admin ? getInspirationStats() : Promise.resolve(null),
     ]);
     setConfig(configData);
     setAccount(accountData);
@@ -72,7 +73,7 @@ export default function Config() {
 
   useEffect(() => {
     refresh().catch((err) => setError(err.message));
-  }, [viewer?.owner_id]);
+  }, [viewer?.owner_id, isAdmin]);
 
   useEffect(() => {
     if (!siteSettings) {
@@ -104,13 +105,18 @@ export default function Config() {
     setError('');
     setStatus('');
     try {
-      const updated = await saveConfig({
-        model: config.model,
-        default_size: config.default_size,
-        default_quality: config.default_quality,
-        user_name: config.managed_by_auth ? undefined : config.user_name,
-        api_key: config.api_key_editable ? apiKey.trim() || undefined : undefined,
-      });
+      const payload = isAdmin
+        ? {
+            model: config.model,
+            default_size: config.default_size,
+            default_quality: config.default_quality,
+            user_name: config.managed_by_auth ? undefined : config.user_name,
+            api_key: config.api_key_editable ? apiKey.trim() || undefined : undefined,
+          }
+        : {
+            api_key: config.api_key_editable ? apiKey.trim() || undefined : undefined,
+          };
+      const updated = await saveConfig(payload);
       setConfig(updated);
       setApiKey('');
       await refresh();
@@ -170,7 +176,7 @@ export default function Config() {
   }
 
   async function handleSaveSiteSettings() {
-    if (!siteSettings?.viewer.is_admin) return;
+    if (!isAdmin) return;
     setSiteSaving(true);
     setError('');
     setStatus('');
@@ -257,7 +263,7 @@ export default function Config() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        <div className="col-span-12 lg:col-span-8 bg-black border border-primary/20 p-6 md:p-8 relative overflow-hidden">
+        <div className={`col-span-12 ${isAdmin ? 'lg:col-span-8' : 'lg:col-span-7'} bg-black border border-primary/20 p-6 md:p-8 relative overflow-hidden`}>
           <div className="absolute top-0 right-0 p-3 text-[9px] text-primary/40 uppercase border-b border-l border-primary/20 bg-primary/5">Owner_CFG</div>
 
           <h2 className="text-xl text-primary mb-8 uppercase flex items-center gap-3 font-bold border-b border-primary/20 pb-4">
@@ -277,17 +283,17 @@ export default function Config() {
             </div>
           </div>
 
-          <div className="bg-secondary/5 border border-secondary/20 p-4 mb-8 text-xs text-white/50 flex flex-col gap-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-secondary uppercase tracking-widest text-[10px] mb-1">{t('config_cases')}</div>
-                <div>{t('config_cases_summary', { total: inspirationStats?.total ?? 0, time: formatDate(inspirationStats?.last_synced_at) })}</div>
-                <div className="mt-1 text-[10px] uppercase tracking-widest text-white/30">
-                  {t('config_cases_sources', { value: inspirationStats?.source_urls?.length || 0 })}
+          {isAdmin ? (
+            <div className="bg-secondary/5 border border-secondary/20 p-4 mb-8 text-xs text-white/50 flex flex-col gap-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-secondary uppercase tracking-widest text-[10px] mb-1">{t('config_cases')}</div>
+                  <div>{t('config_cases_summary', { total: inspirationStats?.total ?? 0, time: formatDate(inspirationStats?.last_synced_at) })}</div>
+                  <div className="mt-1 text-[10px] uppercase tracking-widest text-white/30">
+                    {t('config_cases_sources', { value: inspirationStats?.source_urls?.length || 0 })}
+                  </div>
                 </div>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                {siteSettings?.viewer.is_admin ? (
+                <div className="flex flex-wrap gap-3">
                   <button
                     className="border border-primary/40 text-primary px-4 py-2 uppercase tracking-widest hover:bg-primary/10 transition-colors disabled:opacity-50"
                     type="button"
@@ -297,81 +303,81 @@ export default function Config() {
                     {siteSaving ? <Loader2 className="inline animate-spin mr-2" size={13} /> : null}
                     {t('config_save_case_sources')}
                   </button>
+                  <button
+                    className="border border-secondary/40 text-secondary px-4 py-2 uppercase tracking-widest hover:bg-secondary/10 transition-colors disabled:opacity-50"
+                    type="button"
+                    onClick={handleSyncInspirations}
+                    disabled={saving}
+                  >
+                    {t('config_sync_cases')}
+                  </button>
+                </div>
+              </div>
+
+              <div className="border-t border-secondary/10 pt-4">
+                <Field label={t('site_inspiration_sources_body')}>
+                  <textarea
+                    className="input-cyber min-h-28 resize-y"
+                    value={siteDraft.inspiration_sources}
+                    onChange={(event) => setSiteDraft((current) => ({ ...current, inspiration_sources: event.target.value }))}
+                  />
+                </Field>
+                {inspirationStats?.source_counts?.length ? (
+                  <div className="mt-4 grid grid-cols-1 gap-2 text-[10px] text-white/45 md:grid-cols-2">
+                    {inspirationStats.source_counts.map((source) => (
+                      <div key={source.source_url} className="flex items-center justify-between gap-3 border border-white/5 bg-black/20 px-3 py-2">
+                        <span className="min-w-0 truncate">{source.source_url}</span>
+                        <span className="shrink-0 text-primary">{source.count}</span>
+                      </div>
+                    ))}
+                  </div>
                 ) : null}
-                <button
-                  className="border border-secondary/40 text-secondary px-4 py-2 uppercase tracking-widest hover:bg-secondary/10 transition-colors disabled:opacity-50"
-                  type="button"
-                  onClick={handleSyncInspirations}
-                  disabled={saving}
-                >
-                  {t('config_sync_cases')}
-                </button>
               </div>
             </div>
-
-            <div className="border-t border-secondary/10 pt-4">
-              <Field label={t('site_inspiration_sources_body')}>
-                <textarea
-                  className="input-cyber min-h-28 resize-y"
-                  disabled={!siteSettings?.viewer.is_admin}
-                  value={siteDraft.inspiration_sources}
-                  onChange={(event) => setSiteDraft((current) => ({ ...current, inspiration_sources: event.target.value }))}
-                />
-              </Field>
-              {!siteSettings?.viewer.is_admin ? (
-                <div className="mt-2 text-[10px] uppercase tracking-widest text-white/30">{t('site_admin_only')}</div>
-              ) : null}
-              {inspirationStats?.source_counts?.length ? (
-                <div className="mt-4 grid grid-cols-1 gap-2 text-[10px] text-white/45 md:grid-cols-2">
-                  {inspirationStats.source_counts.map((source) => (
-                    <div key={source.source_url} className="flex items-center justify-between gap-3 border border-white/5 bg-black/20 px-3 py-2">
-                      <span className="min-w-0 truncate">{source.source_url}</span>
-                      <span className="shrink-0 text-primary">{source.count}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-            <Field label={t('config_user_name')}>
-              <input
-                className="input-cyber"
-                disabled={config?.managed_by_auth}
-                value={config?.user_name || ''}
-                onChange={(event) => setConfig((current) => current && { ...current, user_name: event.target.value })}
-              />
-            </Field>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Field label={t('config_model')}>
-                <input className="input-cyber" value={config?.model || 'gpt-image-2'} onChange={(event) => setConfig((current) => current && { ...current, model: event.target.value })} />
-              </Field>
-              <Field label={t('config_size')}>
-                <>
+            {isAdmin ? (
+              <>
+                <Field label={t('config_user_name')}>
                   <input
                     className="input-cyber"
-                    list="image-size-options"
-                    value={config?.default_size || '2K'}
-                    onChange={(event) => setConfig((current) => current && { ...current, default_size: event.target.value })}
+                    disabled={config?.managed_by_auth}
+                    value={config?.user_name || ''}
+                    onChange={(event) => setConfig((current) => current && { ...current, user_name: event.target.value })}
                   />
-                  <datalist id="image-size-options">
-                    <option value="1K" label="1K (1080p)" />
-                    <option value="2K" label="2K (1440p)" />
-                    <option value="4K" label="4K (2160p)" />
-                  </datalist>
-                </>
-              </Field>
-              <Field label={t('config_quality')}>
-                <select className="input-cyber" value={config?.default_quality || 'auto'} onChange={(event) => setConfig((current) => current && { ...current, default_quality: event.target.value })}>
-                  <option>low</option>
-                  <option>medium</option>
-                  <option>high</option>
-                  <option>auto</option>
-                </select>
-              </Field>
-            </div>
+                </Field>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Field label={t('config_model')}>
+                    <input className="input-cyber" value={config?.model || 'gpt-image-2'} onChange={(event) => setConfig((current) => current && { ...current, model: event.target.value })} />
+                  </Field>
+                  <Field label={t('config_size')}>
+                    <>
+                      <input
+                        className="input-cyber"
+                        list="image-size-options"
+                        value={config?.default_size || '2K'}
+                        onChange={(event) => setConfig((current) => current && { ...current, default_size: event.target.value })}
+                      />
+                      <datalist id="image-size-options">
+                        <option value="1K" label="1K (1080p)" />
+                        <option value="2K" label="2K (1440p)" />
+                        <option value="4K" label="4K (2160p)" />
+                      </datalist>
+                    </>
+                  </Field>
+                  <Field label={t('config_quality')}>
+                    <select className="input-cyber" value={config?.default_quality || 'auto'} onChange={(event) => setConfig((current) => current && { ...current, default_quality: event.target.value })}>
+                      <option>low</option>
+                      <option>medium</option>
+                      <option>high</option>
+                      <option>auto</option>
+                    </select>
+                  </Field>
+                </div>
+              </>
+            ) : null}
 
             <div className="flex flex-col gap-2 relative">
               <label className="text-secondary text-[10px] uppercase tracking-widest font-bold mb-1" htmlFor="api_key">{t('config_api_key')}</label>
@@ -429,7 +435,7 @@ export default function Config() {
           </form>
         </div>
 
-        <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
+        <div className={`col-span-12 ${isAdmin ? 'lg:col-span-4' : 'lg:col-span-5'} flex flex-col gap-6`}>
           <div className="bg-black border border-white/10 p-6 relative">
             <h3 className="text-primary mb-6 uppercase flex items-center gap-2 font-bold tracking-wider text-[10px] border-b border-primary/20 pb-4">
               <Globe2 size={16} />
@@ -450,7 +456,7 @@ export default function Config() {
                 </select>
               </Field>
 
-              {siteSettings?.viewer.is_admin ? (
+              {isAdmin ? (
                 <div className="border border-primary/20 bg-primary/5 p-4">
                   <div className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-widest text-primary">
                     <PlugZap size={15} />
@@ -490,45 +496,44 @@ export default function Config() {
                 </div>
               ) : null}
 
-              <div className="border border-secondary/20 bg-secondary/5 p-4">
-                <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-widest text-secondary">
-                  <BellRing size={15} />
-                  {t('site_announcement')}
-                </div>
+              {isAdmin ? (
+                <div className="border border-secondary/20 bg-secondary/5 p-4">
+                  <div className="mb-4 flex items-center gap-2 text-[10px] uppercase tracking-widest text-secondary">
+                    <BellRing size={15} />
+                    {t('site_announcement')}
+                  </div>
 
-                <label className="mb-4 flex items-center gap-3 text-xs text-white/70">
-                  <input
-                    className="h-4 w-4 accent-secondary"
-                    type="checkbox"
-                    checked={siteDraft.announcement_enabled}
-                    disabled={!siteSettings?.viewer.is_admin}
-                    onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_enabled: event.target.checked }))}
-                  />
-                  {t('site_announcement_enabled')}
-                </label>
-
-                <div className="space-y-4">
-                  <Field label={t('site_announcement_title')}>
+                  <label className="mb-4 flex items-center gap-3 text-xs text-white/70">
                     <input
-                      className="input-cyber"
-                      disabled={!siteSettings?.viewer.is_admin}
-                      value={siteDraft.announcement_title}
-                      onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_title: event.target.value }))}
+                      className="h-4 w-4 accent-secondary"
+                      type="checkbox"
+                      checked={siteDraft.announcement_enabled}
+                      onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_enabled: event.target.checked }))}
                     />
-                  </Field>
+                    {t('site_announcement_enabled')}
+                  </label>
 
-                  <Field label={t('site_announcement_body')}>
-                    <textarea
-                      className="input-cyber min-h-32 resize-y"
-                      disabled={!siteSettings?.viewer.is_admin}
-                      value={siteDraft.announcement_body}
-                      onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_body: event.target.value }))}
-                    />
-                  </Field>
+                  <div className="space-y-4">
+                    <Field label={t('site_announcement_title')}>
+                      <input
+                        className="input-cyber"
+                        value={siteDraft.announcement_title}
+                        onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_title: event.target.value }))}
+                      />
+                    </Field>
+
+                    <Field label={t('site_announcement_body')}>
+                      <textarea
+                        className="input-cyber min-h-32 resize-y"
+                        value={siteDraft.announcement_body}
+                        onChange={(event) => setSiteDraft((current) => ({ ...current, announcement_body: event.target.value }))}
+                      />
+                    </Field>
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
-              {siteSettings?.viewer.is_admin ? (
+              {isAdmin ? (
                 <button
                   className="w-full bg-secondary text-white font-bold px-6 py-3 uppercase tracking-widest hover:bg-white hover:text-black transition-colors disabled:opacity-50 flex items-center justify-center gap-2 text-xs"
                   type="button"
@@ -538,11 +543,7 @@ export default function Config() {
                   {siteSaving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
                   {t('site_settings_save')}
                 </button>
-              ) : (
-                <div className="border border-primary/20 bg-primary/5 p-4 text-xs text-white/60">
-                  {t('site_admin_only')}
-                </div>
-              )}
+              ) : null}
             </div>
           </div>
 

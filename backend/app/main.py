@@ -63,6 +63,14 @@ class PromptOptimizeRequest(BaseModel):
     quality: str | None = Field(default=None, max_length=40)
 
 
+class InspirationAISearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    limit: int = Field(default=48, ge=1, le=96)
+    offset: int = Field(default=0, ge=0)
+    section: str | None = Field(default=None, max_length=200)
+    model: str | None = Field(default=None, max_length=120)
+
+
 class EcommercePublishCopyRequest(BaseModel):
     product_name: str = Field(default="", max_length=300)
     materials: str = Field(default="", max_length=1200)
@@ -157,6 +165,15 @@ ECOMMERCE_PUBLISH_COPY_SYSTEM_PROMPT = """你是 JokoAI 的电商种草文案策
 6. 正文末尾带 4-8 个相关话题标签。
 7. 如果用户字段为空，不要编造具体品牌、价格、功效认证或无法确认的信息。
 8. 中文输入输出中文，英文输入输出英文。"""
+
+INSPIRATION_AI_SEARCH_SYSTEM_PROMPT = """你是 JokoAI 的案例库搜索助手。
+用户会用自然语言描述想找的图像案例。你的任务是把需求提炼成适合在标题、提示词、作者字段中检索的关键词。
+要求：
+1. 只输出 JSON，不要 Markdown、解释或代码块。
+2. JSON 格式必须是：{"query":"...","keywords":["..."]}。
+3. query 控制在 2-8 个关键词，使用空格分隔，优先保留主体、风格、用途、行业、画面类型和关键视觉元素。
+4. 不要加入“帮我找”“案例”“图片”等无检索价值的词。
+5. 中文输入优先输出中文关键词，英文输入优先输出英文关键词。"""
 
 
 class AuthSendVerifyCodeRequest(BaseModel):
@@ -660,9 +677,11 @@ def create_app(
 
     @app.post("/api/inspirations/sync")
     async def inspiration_sync(
+        viewer: ViewerContext = Depends(_viewer),
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
     ) -> dict[str, Any]:
+        _require_admin(viewer)
         try:
             result = await sync_inspirations(settings, db)
             app.state.last_inspiration_sync = result
@@ -671,6 +690,39 @@ def create_app(
         except Exception as exc:
             app.state.last_inspiration_sync_error = str(exc)
             raise HTTPException(status_code=502, detail=f"Inspiration sync failed: {exc}") from exc
+
+    @app.post("/api/inspirations/ai-search")
+    async def inspirations_ai_search(
+        request: InspirationAISearchRequest,
+        viewer: ViewerContext = Depends(_viewer),
+        db: Database = Depends(_db),
+        settings: Settings = Depends(_settings),
+        provider: OpenAICompatibleImageClient = Depends(_provider),
+    ) -> dict[str, Any]:
+        config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
+        payload = _inspiration_ai_search_payload(request, settings)
+        fallback_query = _fallback_inspiration_search_query(request.query)
+        try:
+            provider_response = await provider.chat_completion(config, payload)
+            search_query = _extract_inspiration_search_query(_extract_chat_completion_text(provider_response), fallback_query)
+        except ProviderError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+        section = (request.section or "").strip()
+        return {
+            "query": search_query,
+            "original_query": request.query,
+            "items": db.list_inspirations(
+                limit=request.limit,
+                offset=request.offset,
+                q=search_query,
+                section=section,
+                favorite_owner_id=viewer.owner_id if viewer.authenticated else None,
+            ),
+            "total": db.count_inspirations(q=search_query, section=section),
+            "limit": request.limit,
+            "offset": request.offset,
+            "model": payload["model"],
+        }
 
     @app.get("/api/history/{history_id}")
     async def history_detail(
@@ -698,6 +750,7 @@ def create_app(
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
     ) -> dict[str, Any]:
+        _require_authenticated(viewer)
         edit_request = await _parse_history_edit_request(
             raw_request,
             prompt=prompt,
@@ -917,6 +970,7 @@ def create_app(
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
     ) -> dict[str, Any]:
+        _require_authenticated(viewer)
         config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
         payload = _image_payload(config, request)
         task = db.create_image_task(
@@ -950,6 +1004,7 @@ def create_app(
         db: Database = Depends(_db),
         settings: Settings = Depends(_settings),
     ) -> dict[str, Any]:
+        _require_authenticated(viewer)
         config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
         normalized_reference_notes = _normalize_reference_notes(_parse_reference_notes(reference_notes), len(image))
         saved_uploads = _attach_reference_notes(
@@ -1011,6 +1066,7 @@ def create_app(
         settings: Settings = Depends(_settings),
         provider: OpenAICompatibleImageClient = Depends(_provider),
     ) -> dict[str, Any]:
+        _require_authenticated(viewer)
         config = db.get_config(viewer.owner_id, settings, user_name=_viewer_name(viewer, settings))
         reference_upload_files = reference_image or []
         normalized_reference_notes = _normalize_reference_notes(_parse_reference_notes(reference_notes), 1 + len(reference_upload_files))
@@ -1314,6 +1370,9 @@ async def _resolve_user_api_key(
         return str(selected["key"])
 
     payload: dict[str, Any] = {"name": "cybergen-image"}
+    group_id = await _resolve_default_key_group_id(auth_client, auth_base_url, access_token)
+    if group_id is not None:
+        payload["group_id"] = group_id
     created = await auth_client.create_key(auth_base_url, access_token, payload)
     key = str(created.get("key") or "").strip()
     if not key:
@@ -1332,6 +1391,54 @@ def _select_existing_key(keys: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not candidates:
         return None
     return sorted(candidates, key=sort_key)[0]
+
+
+async def _resolve_default_key_group_id(
+    auth_client: Sub2APIAuthClient,
+    auth_base_url: str,
+    access_token: str,
+) -> int | None:
+    try:
+        groups = await auth_client.list_available_groups(auth_base_url, access_token)
+    except Exception:
+        return None
+    selected = _select_default_key_group(groups)
+    if selected is None:
+        return None
+    group_id = selected.get("id")
+    try:
+        return int(group_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _select_default_key_group(groups: list[dict[str, Any]]) -> dict[str, Any] | None:
+    active_groups = [group for group in groups if str(group.get("status") or "active").lower() == "active"]
+    candidates = active_groups or groups
+    if not candidates:
+        return None
+
+    def text(group: dict[str, Any]) -> str:
+        values = [
+            group.get("name"),
+            group.get("platform"),
+            group.get("description"),
+            group.get("subscription_type"),
+        ]
+        return " ".join(str(value or "").lower() for value in values)
+
+    for keyword in ("codex_plus", "codex-plus", "codex plus"):
+        for group in candidates:
+            if keyword in text(group):
+                return group
+    for keyword in ("team", "团队"):
+        for group in candidates:
+            if keyword in text(group):
+                return group
+    for group in candidates:
+        if str(group.get("platform") or "").lower() == "openai":
+            return group
+    return candidates[0]
 
 
 def _client_ip(request: Request) -> str | None:
@@ -1383,6 +1490,25 @@ def _prompt_optimizer_payload(request: PromptOptimizeRequest, settings: Settings
         ],
         "temperature": 0.55,
         "max_tokens": 1800,
+        "stream": False,
+    }
+
+
+def _inspiration_ai_search_payload(request: InspirationAISearchRequest, settings: Settings) -> dict[str, Any]:
+    return {
+        "model": (request.model or settings.prompt_optimizer_model).strip(),
+        "messages": [
+            {"role": "system", "content": INSPIRATION_AI_SEARCH_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "请把下面的自然语言需求提炼为案例库搜索关键词。\n\n"
+                    f"用户需求：{request.query.strip()}"
+                ),
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens": 500,
         "stream": False,
     }
 
@@ -1864,6 +1990,27 @@ def _extract_json_object(text: str) -> Any | None:
         return json.loads(cleaned)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_inspiration_search_query(text: str, fallback_query: str) -> str:
+    parsed = _extract_json_object(text)
+    if isinstance(parsed, dict):
+        query = str(parsed.get("query") or "").strip()
+        if query:
+            return _fallback_inspiration_search_query(query)
+        keywords = parsed.get("keywords")
+        if isinstance(keywords, list):
+            values = [str(keyword).strip() for keyword in keywords if str(keyword).strip()]
+            if values:
+                return _fallback_inspiration_search_query(" ".join(values))
+    return _fallback_inspiration_search_query(text or fallback_query)
+
+
+def _fallback_inspiration_search_query(query: str) -> str:
+    text = " ".join(str(query or "").replace("\n", " ").split())
+    if len(text) <= 120:
+        return text
+    return text[:120].rsplit(" ", 1)[0] or text[:120]
 
 
 def _fallback_series_prompt_plan(

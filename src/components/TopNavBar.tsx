@@ -1,6 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { Bell, CreditCard, Heart, History, ImagePlus, ListTodo, LogOut, Menu, Terminal, UserCircle, X, Zap } from 'lucide-react';
+import { Bell, CreditCard, Heart, History, ImagePlus, ListTodo, Loader2, LogOut, Menu, Terminal, UserCircle, X, Zap } from 'lucide-react';
 import { AccountInfo, formatBalance, getAccount, logoutAccount } from '../api';
 import { useAuth } from '../auth';
 import { useSite } from '../site';
@@ -16,6 +16,7 @@ export default function TopNavBar() {
   const { activeCount, openDrawer } = useTasks();
   const [account, setAccount] = useState<AccountInfo | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     getAccount().then(setAccount).catch(() => setAccount(null));
@@ -26,6 +27,8 @@ export default function TopNavBar() {
   }, [location.pathname]);
 
   async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
     try {
       await logoutAccount();
     } finally {
@@ -52,9 +55,9 @@ export default function TopNavBar() {
 
   return (
     <header className="fixed top-0 left-0 w-full z-[100] flex justify-between items-center px-3 sm:px-6 h-16 bg-surface-bright border-b border-primary/30 shadow-[0_0_20px_rgba(0,243,255,0.1)] shrink-0 font-mono">
-      <div className="flex min-w-0 items-center gap-3 md:gap-8">
+      <div className="flex min-w-0 items-center gap-3 lg:gap-6 xl:gap-8">
         <button
-          className="flex h-10 w-10 shrink-0 items-center justify-center border border-primary/25 text-primary transition-colors hover:bg-primary/10 md:hidden"
+          className="flex h-10 w-10 shrink-0 items-center justify-center border border-primary/25 text-primary transition-colors hover:bg-primary/10 lg:hidden"
           type="button"
           onClick={() => setMobileMenuOpen((current) => !current)}
           aria-label={mobileMenuOpen ? t('mobile_menu_close') : t('mobile_menu_open')}
@@ -62,16 +65,16 @@ export default function TopNavBar() {
         >
           {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <img alt="joko-image2" className="h-10 w-10 rounded-sm object-contain" src={jokoLogo} />
           <div className="flex flex-col gap-1">
-            <Link to="/" className="text-xl font-black tracking-tighter text-white hover:text-primary transition-colors sm:text-2xl">
+            <Link to="/" className="truncate text-xl font-black tracking-tighter text-white hover:text-primary transition-colors sm:text-2xl">
               joko-<span className="text-secondary">image2</span>
             </Link>
             <ModelBadge compact />
           </div>
         </div>
-        <nav className="hidden md:flex gap-6">
+        <nav className="hidden lg:flex gap-2 xl:gap-5">
           <Link
             to="/"
             className={`text-xs uppercase tracking-widest font-bold px-3 py-2 transition-all duration-300 hover:bg-primary/10 hover:text-primary ${
@@ -118,16 +121,16 @@ export default function TopNavBar() {
           )}
         </nav>
       </div>
-      <div className="flex items-center gap-2 md:gap-6">
-        <div className="hidden md:flex items-center gap-4">
-          <div className="flex flex-col items-end">
+      <div className="flex items-center gap-2 lg:gap-3 xl:gap-6">
+        <div className="hidden lg:flex items-center gap-3 xl:gap-4">
+          <div className="hidden flex-col items-end xl:flex">
             <span className="text-[10px] uppercase text-on-surface-variant">{t('top_owner')}</span>
             <span className="text-xs text-tertiary">{viewerLabel}</span>
           </div>
-          <div className="h-10 px-4 bg-surface-container-highest border border-primary/20 flex items-center gap-3 rounded-tr-xl">
+          <div className="h-10 px-3 bg-surface-container-highest border border-primary/20 flex items-center gap-2 rounded-tr-xl xl:px-4 xl:gap-3">
             <span className="text-xs uppercase text-on-surface-variant">{t('top_credits')}</span>
             <span className="font-bold text-lg text-secondary">⚡ {formatBalance(account?.balance)}</span>
-            <Link to="/billing" className="ml-2 px-3 py-1 bg-secondary text-white text-[10px] font-bold uppercase hover:bg-secondary/80 transition-colors shadow-[0_0_10px_rgba(255,0,255,0.3)]">
+            <Link to="/billing" className="ml-1 px-3 py-1 bg-secondary text-white text-[10px] font-bold uppercase hover:bg-secondary/80 transition-colors shadow-[0_0_10px_rgba(255,0,255,0.3)] xl:ml-2">
               {t('top_ledger')}
             </Link>
           </div>
@@ -158,7 +161,7 @@ export default function TopNavBar() {
         </button>
 
         <a
-          className="hidden h-10 items-center border border-primary/30 px-4 text-[10px] font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary/10 md:flex"
+          className="hidden h-10 items-center border border-primary/30 px-4 text-[10px] font-bold uppercase tracking-widest text-primary transition-colors hover:bg-primary/10 lg:flex"
           href={rechargeUrl}
           rel="noreferrer"
           target="_blank"
@@ -168,15 +171,16 @@ export default function TopNavBar() {
 
         {viewer?.authenticated ? (
           <button
-            className="hidden h-10 px-4 border border-secondary/40 text-secondary text-[10px] uppercase tracking-widest hover:bg-secondary/10 transition-colors md:flex items-center gap-2"
+            className="hidden h-10 px-4 border border-secondary/40 text-secondary text-[10px] uppercase tracking-widest hover:bg-secondary/10 transition-colors disabled:cursor-not-allowed disabled:opacity-60 lg:flex items-center gap-2"
             type="button"
             onClick={handleLogout}
+            disabled={loggingOut}
           >
-            <LogOut size={14} />
+            {loggingOut ? <Loader2 className="animate-spin" size={14} /> : <LogOut size={14} />}
             {t('top_logout')}
           </button>
         ) : (
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="hidden items-center gap-2 lg:flex">
             <Link className="h-10 px-4 border border-primary/30 text-primary text-[10px] uppercase tracking-widest hover:bg-primary/10 transition-colors flex items-center" to="/login">
               {t('top_login')}
             </Link>
@@ -197,7 +201,7 @@ export default function TopNavBar() {
         </Link>
       </div>
       {mobileMenuOpen ? (
-        <div className="fixed inset-x-0 top-16 z-[99] border-b border-primary/25 bg-surface/95 px-4 py-4 shadow-[0_18px_30px_rgba(0,0,0,0.45)] backdrop-blur-md md:hidden">
+        <div className="fixed inset-x-0 top-16 z-[99] border-b border-primary/25 bg-surface/95 px-4 py-4 shadow-[0_18px_30px_rgba(0,0,0,0.45)] backdrop-blur-md lg:hidden">
           <div className="mb-4 border border-primary/15 bg-primary/5 p-3">
             <div className="text-[10px] uppercase tracking-widest text-on-surface-variant">{t('top_owner')}</div>
             <div className="mt-1 truncate text-xs text-tertiary">{viewerLabel}</div>
@@ -238,11 +242,12 @@ export default function TopNavBar() {
             </a>
             {viewer?.authenticated ? (
               <button
-                className="flex h-11 items-center justify-center gap-2 border border-secondary/35 text-[10px] uppercase tracking-widest text-secondary transition-colors hover:bg-secondary/10"
+                className="flex h-11 items-center justify-center gap-2 border border-secondary/35 text-[10px] uppercase tracking-widest text-secondary transition-colors hover:bg-secondary/10 disabled:cursor-not-allowed disabled:opacity-60"
                 type="button"
                 onClick={handleLogout}
+                disabled={loggingOut}
               >
-                <LogOut size={14} />
+                {loggingOut ? <Loader2 className="animate-spin" size={14} /> : <LogOut size={14} />}
                 {t('top_logout')}
               </button>
             ) : (

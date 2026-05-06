@@ -141,6 +141,12 @@ export type InspirationListResponse = {
   offset: number;
 };
 
+export type InspirationAISearchResponse = InspirationListResponse & {
+  query: string;
+  original_query: string;
+  model: string;
+};
+
 export type BalanceInfo = {
   ok: boolean;
   remaining: number | null;
@@ -427,6 +433,13 @@ export function getInspirations(params: { limit?: number; offset?: number; q?: s
   if (params.section) search.set('section', params.section);
   const query = search.toString();
   return request<InspirationListResponse>(`/api/inspirations${query ? `?${query}` : ''}`);
+}
+
+export function searchInspirationsWithAI(payload: { query: string; limit?: number; offset?: number; section?: string }) {
+  return request<InspirationAISearchResponse>('/api/inspirations/ai-search', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getFavoriteInspirations(params: { limit?: number; offset?: number; q?: string; section?: string } = {}) {

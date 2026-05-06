@@ -12,8 +12,11 @@ export type HomeFeedState = {
   inspirationTotal: number;
   inspirationSearchInput: string;
   inspirationQuery: string;
+  inspirationSearchMode: 'keyword' | 'ai';
+  inspirationAIQuery: string;
   loadedOwnerId: string;
   loadedQuery: string;
+  loadedSearchMode: 'keyword' | 'ai';
   initialized: boolean;
   scrollY: number;
 };
@@ -34,8 +37,11 @@ const initialState: HomeFeedState = {
   inspirationTotal: 0,
   inspirationSearchInput: '',
   inspirationQuery: '',
+  inspirationSearchMode: 'keyword',
+  inspirationAIQuery: '',
   loadedOwnerId: '',
   loadedQuery: '',
+  loadedSearchMode: 'keyword',
   initialized: false,
   scrollY: 0,
 };
