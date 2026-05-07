@@ -47,6 +47,7 @@ export default function Config() {
     provider_base_url: string;
     auth_base_url: string;
     recharge_url: string;
+    trial_balance_usd: string;
     sub2api_admin_token: string;
     sub2api_admin_jwt: string;
   }>({
@@ -58,6 +59,7 @@ export default function Config() {
     provider_base_url: '',
     auth_base_url: '',
     recharge_url: '',
+    trial_balance_usd: '',
     sub2api_admin_token: '',
     sub2api_admin_jwt: '',
   });
@@ -94,6 +96,7 @@ export default function Config() {
       provider_base_url: siteSettings.upstream?.provider_base_url || '',
       auth_base_url: siteSettings.upstream?.auth_base_url || '',
       recharge_url: siteSettings.upstream?.recharge_url || '',
+      trial_balance_usd: String(siteSettings.upstream?.trial_balance_usd ?? 2),
       sub2api_admin_token: '',
       sub2api_admin_jwt: '',
     });
@@ -106,6 +109,7 @@ export default function Config() {
     siteSettings?.upstream?.provider_base_url,
     siteSettings?.upstream?.auth_base_url,
     siteSettings?.upstream?.recharge_url,
+    siteSettings?.upstream?.trial_balance_usd,
   ]);
 
   async function handleSubmit(event: FormEvent) {
@@ -189,6 +193,7 @@ export default function Config() {
         provider_base_url: siteDraft.provider_base_url.trim(),
         auth_base_url: siteDraft.auth_base_url.trim(),
         recharge_url: siteDraft.recharge_url.trim(),
+        trial_balance_usd: Number(siteDraft.trial_balance_usd || 0),
         sub2api_admin_token: siteDraft.sub2api_admin_token.trim() || undefined,
         sub2api_admin_jwt: siteDraft.sub2api_admin_jwt.trim() || undefined,
         inspiration_sources: siteDraft.inspiration_sources
@@ -530,6 +535,22 @@ export default function Config() {
                         />
                         <div className="mt-1 text-[9px] uppercase tracking-widest text-white/30">
                           {t('site_admin_token_saved', { value: siteSettings.upstream?.sub2api_admin_jwt_set ? siteSettings.upstream.sub2api_admin_jwt_hint || 'SET' : 'NONE' })}
+                        </div>
+                      </>
+                    </Field>
+
+                    <Field label={t('site_trial_balance_usd')}>
+                      <>
+                        <input
+                          className="input-cyber"
+                          min="0"
+                          step="0.01"
+                          type="number"
+                          value={siteDraft.trial_balance_usd}
+                          onChange={(event) => setSiteDraft((current) => ({ ...current, trial_balance_usd: event.target.value }))}
+                        />
+                        <div className="mt-1 text-[9px] uppercase tracking-widest text-white/30">
+                          {t('site_trial_balance_effective', { value: siteSettings.upstream?.trial_balance_usd ?? 0 })}
                         </div>
                       </>
                     </Field>

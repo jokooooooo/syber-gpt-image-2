@@ -1227,6 +1227,35 @@ def test_register_uses_site_configured_sub2api_admin_token(tmp_path: Path) -> No
         assert grant["balance_granted_usd"] == 2
 
 
+def test_admin_can_configure_trial_balance_amount(tmp_path: Path) -> None:
+    auth = FakeAuthClient()
+    app = make_app(tmp_path, auth_client=auth)
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"email": "demo@example.com", "password": "secret123"})
+        assert login.status_code == 200
+
+        saved = client.put("/api/site-settings", json={"trial_balance_usd": 5.5})
+
+        assert saved.status_code == 200
+        upstream = saved.json()["upstream"]
+        assert upstream["trial_balance_usd"] == 5.5
+        assert upstream["configured_trial_balance_usd"] == 5.5
+
+
+def test_register_uses_site_configured_trial_balance_amount(tmp_path: Path) -> None:
+    auth = FakeAuthClient()
+    app = make_app(tmp_path, auth_client=auth)
+    app.state.db.update_site_settings({"sub2api_admin_token": "admin-token-from-db", "trial_balance_usd": 3.25})
+    with TestClient(app) as client:
+        register = client.post("/api/auth/register", json={"email": "new@example.com", "password": "secret123"})
+
+        assert register.status_code == 200
+        assert auth.admin_balance_calls[0]["payload"]["balance"] == 3.25
+        grant = app.state.db.get_trial_grant(owner_id="user:7")
+        assert grant["status"] == "created"
+        assert grant["balance_granted_usd"] == 3.25
+
+
 def test_login_does_not_create_trial_key(tmp_path: Path) -> None:
     auth = FakeAuthClient()
     with make_client(tmp_path, auth_client=auth) as client:

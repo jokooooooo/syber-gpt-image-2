@@ -167,6 +167,7 @@ class Database:
                     sub2api_admin_token TEXT NOT NULL DEFAULT '',
                     sub2api_admin_jwt TEXT NOT NULL DEFAULT '',
                     recharge_url TEXT NOT NULL DEFAULT '',
+                    trial_balance_usd REAL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -278,6 +279,8 @@ class Database:
             conn.execute("ALTER TABLE site_settings ADD COLUMN sub2api_admin_jwt TEXT NOT NULL DEFAULT ''")
         if "recharge_url" not in site_settings_columns:
             conn.execute("ALTER TABLE site_settings ADD COLUMN recharge_url TEXT NOT NULL DEFAULT ''")
+        if "trial_balance_usd" not in site_settings_columns:
+            conn.execute("ALTER TABLE site_settings ADD COLUMN trial_balance_usd REAL")
 
         self._ensure_site_settings(conn, settings)
 
@@ -473,6 +476,7 @@ class Database:
             "sub2api_admin_token",
             "sub2api_admin_jwt",
             "recharge_url",
+            "trial_balance_usd",
         }
         if "inspiration_sources" in payload:
             payload = {
@@ -1528,6 +1532,8 @@ def _inspiration_title_from_prompt(prompt: str) -> str:
 def _site_settings_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     data = dict(row)
     data["inspiration_sources"] = _json_load(data.pop("inspiration_sources_json", None)) or []
+    if "trial_balance_usd" not in data:
+        data["trial_balance_usd"] = None
     return data
 
 

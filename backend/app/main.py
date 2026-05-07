@@ -223,6 +223,7 @@ class SiteSettingsUpdate(BaseModel):
     sub2api_admin_token: str | None = Field(default=None, max_length=4096)
     sub2api_admin_jwt: str | None = Field(default=None, max_length=4096)
     recharge_url: str | None = Field(default=None, max_length=2048)
+    trial_balance_usd: float | None = Field(default=None, ge=0, le=1000)
 
 
 @dataclass
@@ -1343,6 +1344,8 @@ def _public_site_settings(settings_data: dict[str, Any], viewer: ViewerContext, 
             "sub2api_admin_token_hint": _mask_key(admin_token or settings.sub2api_admin_token),
             "sub2api_admin_jwt_set": bool(admin_jwt or settings.sub2api_admin_jwt),
             "sub2api_admin_jwt_hint": _mask_key(admin_jwt or settings.sub2api_admin_jwt),
+            "trial_balance_usd": _effective_trial_balance_usd(settings_data, settings),
+            "configured_trial_balance_usd": settings_data.get("trial_balance_usd"),
         }
     return payload
 
@@ -1367,6 +1370,16 @@ def _effective_auth_base_url(settings_data: dict[str, Any], settings: Settings) 
 
 def _effective_recharge_url(settings_data: dict[str, Any], settings: Settings) -> str:
     return str(settings_data.get("recharge_url") or settings.recharge_url).strip().rstrip("/")
+
+
+def _effective_trial_balance_usd(settings_data: dict[str, Any], settings: Settings) -> float:
+    value = settings_data.get("trial_balance_usd")
+    if value is None:
+        return settings.trial_balance_usd
+    try:
+        return max(0, float(value))
+    except (TypeError, ValueError):
+        return settings.trial_balance_usd
 
 
 def _site_auth_base_url(db: Database, settings: Settings) -> str:
@@ -1675,7 +1688,8 @@ async def _grant_trial_balance(
     sub2api_user_id: int,
     site_settings: dict[str, Any] | None = None,
 ) -> tuple[float, str | None]:
-    if not settings.trial_balance_grant_enabled or settings.trial_balance_usd <= 0:
+    balance_usd = _effective_trial_balance_usd(site_settings or {}, settings)
+    if not settings.trial_balance_grant_enabled or balance_usd <= 0:
         return 0, None
     configured_admin_token = str((site_settings or {}).get("sub2api_admin_token") or settings.sub2api_admin_token).strip()
     configured_admin_jwt = str((site_settings or {}).get("sub2api_admin_jwt") or settings.sub2api_admin_jwt).strip()
@@ -1684,7 +1698,7 @@ async def _grant_trial_balance(
     if not token:
         return 0, "未配置 SUB2API_ADMIN_TOKEN 或 SUB2API_ADMIN_JWT，已创建试用 Key 但未自动赠送余额"
     payload = {
-        "balance": settings.trial_balance_usd,
+        "balance": balance_usd,
         "operation": "add",
         "notes": "joko-image2 new user trial grant",
     }
@@ -1698,7 +1712,7 @@ async def _grant_trial_balance(
         )
     except ProviderError as exc:
         return 0, f"试用余额赠送失败：{exc.message}"
-    return settings.trial_balance_usd, None
+    return balance_usd, None
 
 
 async def _resolve_user_api_key(

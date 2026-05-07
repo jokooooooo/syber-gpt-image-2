@@ -388,6 +388,8 @@ export type SiteSettings = {
     sub2api_admin_token_hint: string;
     sub2api_admin_jwt_set: boolean;
     sub2api_admin_jwt_hint: string;
+    trial_balance_usd: number;
+    configured_trial_balance_usd: number | null;
   };
   viewer: {
     authenticated: boolean;
@@ -440,6 +442,7 @@ export function updateSiteSettings(payload: {
   recharge_url?: string;
   sub2api_admin_token?: string;
   sub2api_admin_jwt?: string;
+  trial_balance_usd?: number;
 }) {
   return request<SiteSettings>('/api/site-settings', {
     method: 'PUT',
