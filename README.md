@@ -237,12 +237,12 @@ docker compose logs --tail=100 backend web
 
 ### 新用户试用额度
 
-注册成功后，joko-image2 会用该用户在 sub2api 的登录态创建一个限额 Key；如果配置了 sub2api 管理员凭据，还会调用管理员接口给该用户增加体验余额。
+注册成功后，joko-image2 会用该用户在 sub2api 的登录态创建一个 API Key；如果配置了 sub2api 管理员凭据，还会调用管理员接口给该用户增加体验余额。默认创建的 Key 不限制额度，后续用户自行充值后也能继续使用同一个 Key。
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TRIAL_KEY_ENABLED` | `true` | 是否给新注册用户创建试用 Key |
-| `TRIAL_KEY_QUOTA_USD` | `2` | 试用 Key 的美元限额 |
+| `TRIAL_KEY_QUOTA_USD` | `0` | 试用 Key 的美元限额，`0` 表示不限制 Key 额度 |
 | `TRIAL_KEY_EXPIRES_DAYS` | `30` | 试用 Key 过期天数，设为 `0` 表示不过期 |
 | `TRIAL_KEY_NAME_PREFIX` | `joko-image2-trial` | 试用 Key 名称前缀 |
 | `TRIAL_BALANCE_GRANT_ENABLED` | `true` | 是否自动给 sub2api 用户加体验余额 |
@@ -250,7 +250,7 @@ docker compose logs --tail=100 backend web
 | `SUB2API_ADMIN_TOKEN` | 空 | sub2api 后台设置里的 Admin API Key，通过 `x-api-key` 调管理员接口 |
 | `SUB2API_ADMIN_JWT` | 空 | 可选，管理员 JWT；通常优先使用 `SUB2API_ADMIN_TOKEN` |
 
-注意：只创建 `quota=2` 的 Key 不等于账户里有 2 美元余额。若 sub2api 用户余额为 0，必须配置 `SUB2API_ADMIN_TOKEN` 或 `SUB2API_ADMIN_JWT` 让系统自动加余额，否则新用户仍可能因为余额不足无法生成图片。
+注意：`TRIAL_BALANCE_USD` 才是注册送的账户余额；`TRIAL_KEY_QUOTA_USD` 是 Key 自身消费上限。建议保持 `TRIAL_KEY_QUOTA_USD=0`，避免用户后续自行充值后仍被试用 Key 限额卡住。若 sub2api 用户余额为 0，必须配置 `SUB2API_ADMIN_TOKEN` 或 `SUB2API_ADMIN_JWT` 让系统自动加余额，否则新用户仍可能因为余额不足无法生成图片。
 
 后台覆盖规则：
 

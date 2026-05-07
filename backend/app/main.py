@@ -1525,7 +1525,7 @@ async def _resolve_auth_api_key(
     grant_trial: bool,
 ) -> str:
     api_key: str | None = None
-    if grant_trial and settings.trial_key_enabled and settings.trial_key_quota_usd > 0:
+    if grant_trial and settings.trial_key_enabled:
         api_key = await _resolve_trial_api_key(
             db,
             settings,

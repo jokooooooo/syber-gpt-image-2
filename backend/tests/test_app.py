@@ -402,7 +402,7 @@ def make_app(tmp_path: Path, auth_client: FakeAuthClient | None = None, provider
         guest_ttl_seconds=86400,
         cookie_secure=False,
         trial_key_enabled=True,
-        trial_key_quota_usd=2,
+        trial_key_quota_usd=0,
         trial_key_expires_days=30,
         trial_key_name_prefix="joko-image2-trial",
         trial_balance_grant_enabled=True,
@@ -1126,21 +1126,21 @@ def test_login_binds_managed_key_with_default_group(tmp_path: Path) -> None:
         assert account["viewer"]["user"]["role"] == "admin"
 
 
-def test_register_creates_trial_key_with_quota(tmp_path: Path) -> None:
+def test_register_creates_unlimited_trial_key_and_records_balance_grant(tmp_path: Path) -> None:
     auth = FakeAuthClient()
     with make_client(tmp_path, auth_client=auth) as client:
         register = client.post("/api/auth/register", json={"email": "new@example.com", "password": "secret123"})
 
         assert register.status_code == 200
         assert auth.created_keys and auth.created_keys[0]["name"].startswith("joko-image2-trial")
-        assert auth.created_keys[0]["quota"] == 2
+        assert auth.created_keys[0]["quota"] == 0
         assert auth.created_keys[0]["expires_in_days"] == 30
         assert auth.created_keys[0]["group"]["id"] == 12
         assert auth.admin_balance_calls == []
 
         grant = client.app.state.db.get_trial_grant(owner_id="user:7")
         assert grant["status"] == "partial"
-        assert grant["quota_usd"] == 2
+        assert grant["quota_usd"] == 0
         assert grant["balance_granted_usd"] == 0
         assert "SUB2API_ADMIN_TOKEN" in grant["error"]
 

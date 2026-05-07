@@ -117,7 +117,7 @@ class Settings:
             guest_ttl_seconds=int(os.getenv("GUEST_TTL_SECONDS", str(365 * 24 * 60 * 60))),
             cookie_secure=_env_bool("COOKIE_SECURE", False),
             trial_key_enabled=_env_bool("TRIAL_KEY_ENABLED", True),
-            trial_key_quota_usd=float(os.getenv("TRIAL_KEY_QUOTA_USD", "2")),
+            trial_key_quota_usd=float(os.getenv("TRIAL_KEY_QUOTA_USD", "0")),
             trial_key_expires_days=int(os.getenv("TRIAL_KEY_EXPIRES_DAYS", os.getenv("TRIAL_KEY_EXPIRE_DAYS", "30"))),
             trial_key_name_prefix=os.getenv("TRIAL_KEY_NAME_PREFIX", "joko-image2-trial"),
             trial_balance_grant_enabled=_env_bool("TRIAL_BALANCE_GRANT_ENABLED", True),
