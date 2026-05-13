@@ -1009,6 +1009,7 @@ def test_image_size_presets_follow_provider_limits() -> None:
     assert _provider_image_size("FAST", "1:1") == "1024x1024"
     assert _provider_image_size("FAST", "16:9") == "1360x768"
     assert _provider_image_size("FAST", "9:16") == "768x1360"
+    assert _provider_image_size("768x1360", "9:16") == "768x1360"
     assert _provider_image_size("1K", "1:1") == "1088x1088"
     assert _provider_image_size("1K", "16:9") == "2048x1152"
     assert _provider_image_size("1K", "9:16") == "1152x2048"

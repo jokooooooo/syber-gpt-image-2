@@ -180,6 +180,7 @@ SIZE_PRESETS: dict[str, dict[str, str]] = {
 SIZE_TIER_BY_DIMENSION = {
     dimension.lower(): scale for scale, ratios in SIZE_PRESETS.items() for dimension in ratios.values()
 }
+ALLOWED_PRESET_DIMENSIONS = set(SIZE_TIER_BY_DIMENSION)
 
 RETRYABLE_PROVIDER_STATUS_CODES = {429, 502, 503, 504}
 IMAGE_PROVIDER_MAX_ATTEMPTS = 3
@@ -3371,7 +3372,7 @@ def _provider_image_size(size: str, aspect_ratio: str | None = None) -> str:
     dimension_parts = cleaned_size.lower().split("x")
     if len(dimension_parts) == 2 and all(part.isdigit() for part in dimension_parts):
         width, height = (int(part) for part in dimension_parts)
-        if width * height < 1024 * 1024:
+        if cleaned_size.lower() not in ALLOWED_PRESET_DIMENSIONS and width * height < 1024 * 1024:
             raise HTTPException(status_code=400, detail=f"Unsupported image size below minimum pixel budget: {cleaned_size}")
         if width % 16 != 0 or height % 16 != 0:
             raise HTTPException(status_code=400, detail=f"Unsupported image size, width and height must be divisible by 16: {cleaned_size}")
