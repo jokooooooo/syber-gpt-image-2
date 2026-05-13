@@ -3,6 +3,11 @@
 `joko-image` 是一个基于 React + FastAPI 的生图网站项目。前端负责生图、改图、历史、任务列表、账单、系统设置等页面；后端负责用户会话、配置保存、异步生图任务、图片落盘、账单记录和对接 sub2api。
 
 当前对接的是 sub2api 的 OpenAI 兼容接口，默认模型为：
+<img width="2880" height="1462" alt="image" src="https://github.com/user-attachments/assets/dcb7dea6-f5fc-4e65-9627-89425051137f" />
+<img width="2880" height="1462" alt="image" src="https://github.com/user-attachments/assets/74d86736-60d0-4c07-a221-2357c23ec98d" />
+<img width="2880" height="1462" alt="image" src="https://github.com/user-attachments/assets/79d2d2a5-0295-4fad-9b3a-a9ca7d37ed4f" />
+<img width="2880" height="1462" alt="image" src="https://github.com/user-attachments/assets/5eebfe66-7d22-44ac-bcc2-c24b05be0615" />
+
 
 ```text
 gpt-image-2
