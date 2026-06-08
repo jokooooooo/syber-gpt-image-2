@@ -23,6 +23,10 @@ PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
 
+TRIPTYCH_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAYAAAAECAIAAAAiZtkUAAAAF0lEQVR4nGP8z8DAwMDAiEQxMWAA4oQAzTMDBxDYqVAAAAAASUVORK5CYII="
+)
+
 
 class FakeProvider:
     def __init__(self) -> None:
@@ -69,6 +73,7 @@ class FakeProvider:
                 ],
                 "usage": {"total_tokens": 8},
             }
+
         if "电商商品图识别分析师" in system_content:
             return {
                 "id": "chatcmpl-ecommerce-vision-test",
@@ -209,6 +214,14 @@ class FakeProvider:
         self.edited_fields.append(fields)
         self.edited_images.append(images)
         return {"created": 124, "data": [{"b64_json": PNG_B64}], "usage": {"total_tokens": 2}}
+
+
+class TriptychProvider(FakeProvider):
+    async def generate_image(self, config: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        await asyncio.sleep(0.02)
+        self.generated_configs.append(dict(config))
+        self.generated_payloads.append(payload)
+        return {"created": 123, "data": [{"b64_json": TRIPTYCH_PNG_B64, "revised_prompt": "triptych"}], "usage": {"total_tokens": 1}}
 
 
 class FlakyProvider(FakeProvider):
@@ -826,6 +839,51 @@ def test_generation_passes_resolution_ratio_and_quality(tmp_path: Path) -> None:
         assert provider.generated_payloads[-1]["size"] == "2560x1440"
         assert "aspectRatio" not in provider.generated_payloads[-1]
         assert provider.generated_payloads[-1]["quality"] == "high"
+
+
+def test_douyin_triptych_generation_is_tagged_and_downloadable(tmp_path: Path) -> None:
+    provider = TriptychProvider()
+    with make_client(tmp_path, provider=provider) as client:
+        login_demo_user(client)
+
+        generated = client.post(
+            "/api/images/generate",
+            json={
+                "prompt": "抖音主页三联网站门面",
+                "size": "1K",
+                "aspect_ratio": "1:1",
+                "quality": "low",
+                "n": 4,
+                "layout_preset": "douyin_triptych",
+            },
+        )
+
+        assert generated.status_code == 200
+        task = wait_for_task(client, generated.json()["id"], attempts=120)
+        item = task["items"][0]
+        assert task["status"] == "succeeded"
+        assert task["size"] == "3456x1536"
+        assert task["aspect_ratio"] == "9:4"
+        assert len(provider.generated_payloads) == 1
+        assert provider.generated_payloads[-1]["size"] == "3456x1536"
+        assert provider.generated_payloads[-1]["n"] == 1
+        assert provider.generated_payloads[-1]["layout_preset"] == "douyin_triptych"
+        assert item["task_request"]["layout_preset"] == "douyin_triptych"
+
+        zip_response = client.get(f"/api/history/{item['id']}/douyin-triptych.zip")
+        assert zip_response.status_code == 200
+        assert zip_response.headers["content-type"] == "application/zip"
+        with zipfile.ZipFile(BytesIO(zip_response.content)) as archive:
+            assert archive.namelist() == [
+                "00-full-3240x1440.png",
+                "01-left-1080x1440.png",
+                "02-center-1080x1440.png",
+                "03-right-1080x1440.png",
+            ]
+
+        part_response = client.get(f"/api/history/{item['id']}/douyin-triptych/left.png")
+        assert part_response.status_code == 200
+        assert part_response.headers["content-type"] == "image/png"
 
 
 def test_generation_fans_out_multi_image_requests_into_one_task(tmp_path: Path) -> None:

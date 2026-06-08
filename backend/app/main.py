@@ -15,6 +15,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .auth_client import Sub2APIAuthClient
@@ -45,6 +46,7 @@ class GenerateRequest(BaseModel):
     n: int = Field(default=1, ge=1, le=9)
     background: str | None = None
     output_format: str | None = None
+    layout_preset: str | None = Field(default=None, max_length=80)
 
 
 class HistoryEditRequest(BaseModel):
@@ -181,6 +183,10 @@ SIZE_TIER_BY_DIMENSION = {
     dimension.lower(): scale for scale, ratios in SIZE_PRESETS.items() for dimension in ratios.values()
 }
 ALLOWED_PRESET_DIMENSIONS = set(SIZE_TIER_BY_DIMENSION)
+DOUYIN_TRIPTYCH_PRESET = "douyin_triptych"
+DOUYIN_TRIPTYCH_PROVIDER_SIZE = "3456x1536"
+DOUYIN_TRIPTYCH_EXPORT_SIZE = (3240, 1440)
+DOUYIN_TRIPTYCH_TILE_SIZE = (1080, 1440)
 
 RETRYABLE_PROVIDER_STATUS_CODES = {429, 502, 503, 504}
 IMAGE_PROVIDER_MAX_ATTEMPTS = 3
@@ -1103,6 +1109,39 @@ def create_app(
         headers = {"Content-Disposition": f'attachment; filename="joko-image2-{task_id[:12]}.zip"'}
         return Response(content=archive.getvalue(), media_type="application/zip", headers=headers)
 
+    @app.get("/api/history/{history_id}/douyin-triptych/{part}.png")
+    async def douyin_triptych_part_download(
+        history_id: str,
+        part: str,
+        viewer: ViewerContext = Depends(_viewer),
+        db: Database = Depends(_db),
+    ) -> Response:
+        item = _get_douyin_triptych_history_item(db, viewer.owner_id, history_id)
+        part_index = _douyin_triptych_part_index(part)
+        image_bytes = _render_douyin_triptych_part(item, part_index)
+        filename = f"joko-image2-douyin-{history_id[:8]}-{part_index + 1}.png"
+        return Response(
+            content=image_bytes,
+            media_type="image/png",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.get("/api/history/{history_id}/douyin-triptych.zip")
+    async def douyin_triptych_download_zip(
+        history_id: str,
+        viewer: ViewerContext = Depends(_viewer),
+        db: Database = Depends(_db),
+    ) -> Response:
+        item = _get_douyin_triptych_history_item(db, viewer.owner_id, history_id)
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            zip_file.writestr("00-full-3240x1440.png", _render_douyin_triptych_full(item))
+            for index, label in enumerate(("left", "center", "right")):
+                zip_file.writestr(f"{index + 1:02d}-{label}-1080x1440.png", _render_douyin_triptych_part(item, index))
+        archive.seek(0)
+        headers = {"Content-Disposition": f'attachment; filename="joko-image2-douyin-{history_id[:8]}.zip"'}
+        return Response(content=archive.getvalue(), media_type="application/zip", headers=headers)
+
     @app.get("/api/tasks")
     async def image_tasks(
         limit: int = 20,
@@ -1262,7 +1301,7 @@ def create_app(
                 "prompt": request.prompt,
                 "model": payload["model"],
                 "size": payload["size"],
-                "aspect_ratio": request.aspect_ratio or "",
+                "aspect_ratio": "9:4" if payload.get("layout_preset") == DOUYIN_TRIPTYCH_PRESET else request.aspect_ratio or "",
                 "quality": payload["quality"],
                 "request": payload,
             },
@@ -1988,19 +2027,28 @@ def _client_ip(request: Request) -> str | None:
 
 
 def _image_payload(config: dict[str, Any], request: GenerateRequest) -> dict[str, Any]:
+    layout_preset = _normalize_layout_preset(request.layout_preset)
+    size = DOUYIN_TRIPTYCH_PROVIDER_SIZE if layout_preset == DOUYIN_TRIPTYCH_PRESET else request.size or config["default_size"]
     payload = {
         "model": request.model or config["model"],
         "prompt": request.prompt,
-        "size": _provider_image_size(request.size or config["default_size"], request.aspect_ratio),
+        "size": _provider_image_size(size, request.aspect_ratio),
         "quality": request.quality or config["default_quality"],
-        "n": request.n,
+        "n": 1 if layout_preset == DOUYIN_TRIPTYCH_PRESET else request.n,
         "response_format": "b64_json",
     }
+    if layout_preset == DOUYIN_TRIPTYCH_PRESET:
+        payload["layout_preset"] = DOUYIN_TRIPTYCH_PRESET
     if request.background:
         payload["background"] = request.background
     if request.output_format:
         payload["output_format"] = request.output_format
     return payload
+
+
+def _normalize_layout_preset(value: str | None) -> str:
+    normalized = str(value or "").strip().lower()
+    return DOUYIN_TRIPTYCH_PRESET if normalized == DOUYIN_TRIPTYCH_PRESET else ""
 
 
 def _prompt_optimizer_payload(request: PromptOptimizeRequest, settings: Settings) -> dict[str, Any]:
@@ -4165,6 +4213,68 @@ def _public_series_plan(plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(item, dict)
         ],
     }
+
+
+def _get_douyin_triptych_history_item(db: Database, owner_id: str, history_id: str) -> dict[str, Any]:
+    item = db.get_history(owner_id, history_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="History item not found")
+    task_request = item.get("task_request")
+    if not isinstance(task_request, dict) or task_request.get("layout_preset") != DOUYIN_TRIPTYCH_PRESET:
+        raise HTTPException(status_code=400, detail="History item is not a Douyin triptych image")
+    if item.get("status") != "succeeded" or not item.get("image_path"):
+        raise HTTPException(status_code=404, detail="No downloadable image found")
+    image_path = Path(str(item.get("image_path") or ""))
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Stored image file not found")
+    return item
+
+
+def _douyin_triptych_part_index(part: str) -> int:
+    normalized = str(part or "").strip().lower()
+    mapping = {
+        "0": 0,
+        "1": 0,
+        "left": 0,
+        "l": 0,
+        "2": 1,
+        "center": 1,
+        "middle": 1,
+        "m": 1,
+        "3": 2,
+        "right": 2,
+        "r": 2,
+    }
+    if normalized not in mapping:
+        raise HTTPException(status_code=400, detail="Unsupported Douyin triptych part")
+    return mapping[normalized]
+
+
+def _load_douyin_triptych_canvas(item: dict[str, Any]) -> Image.Image:
+    image_path = Path(str(item.get("image_path") or ""))
+    try:
+        with Image.open(image_path) as image:
+            return image.convert("RGB").resize(DOUYIN_TRIPTYCH_EXPORT_SIZE, Image.Resampling.LANCZOS)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to process stored image") from exc
+
+
+def _image_to_png_bytes(image: Image.Image) -> bytes:
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _render_douyin_triptych_full(item: dict[str, Any]) -> bytes:
+    return _image_to_png_bytes(_load_douyin_triptych_canvas(item))
+
+
+def _render_douyin_triptych_part(item: dict[str, Any], part_index: int) -> bytes:
+    canvas = _load_douyin_triptych_canvas(item)
+    tile_width, tile_height = DOUYIN_TRIPTYCH_TILE_SIZE
+    left = part_index * tile_width
+    tile = canvas.crop((left, 0, left + tile_width, tile_height))
+    return _image_to_png_bytes(tile)
 
 
 def _request_image_count(payload: dict[str, Any]) -> int:

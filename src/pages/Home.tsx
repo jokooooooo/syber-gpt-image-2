@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUp, Heart, ImagePlus, Maximize2, Minimize2, RefreshCw, Loader2, Search, Sparkles, X } from 'lucide-react';
+import { ArrowUp, Heart, ImagePlus, Maximize2, Minimize2, RefreshCw, Loader2, Scissors, Search, Sparkles, X } from 'lucide-react';
 import {
   editImage,
   favoriteInspiration,
@@ -18,11 +18,18 @@ import {
 import { useAuth } from '../auth';
 import { copyTextToClipboard } from '../clipboard';
 import ImagePreviewModal from '../components/ImagePreviewModal';
+import DouyinTriptychModal from '../components/DouyinTriptychModal';
 import MasonryGrid from '../components/MasonryGrid';
 import ModelBadge from '../components/ModelBadge';
 import PromptEditorModal from '../components/PromptEditorModal';
 import RetryImage from '../components/RetryImage';
 import { useHomeFeed } from '../homeFeed';
+import {
+  DOUYIN_TRIPTYCH_PRESET,
+  DOUYIN_TRIPTYCH_PROVIDER_RATIO,
+  DOUYIN_TRIPTYCH_PROVIDER_SIZE,
+  isDouyinTriptychItem,
+} from '../douyinTriptych';
 import { groupHistoryItems, mergeHistoryItems } from '../historyGroups';
 import { createReferenceEntry, REFERENCE_ROLE_OPTIONS, ReferenceImageEntry } from '../referenceImages';
 import { useNotifier } from '../notifications';
@@ -49,7 +56,7 @@ function groupHistoryForFeed(items: HistoryItem[]): FeedItem[] {
       key: `history-${group.key}`,
       id: `ID:${group.first.id.slice(0, 4).toUpperCase()}`,
       img: group.images[0].url,
-      images: group.images.map((image) => ({ id: image.id, url: image.url, prompt: image.prompt })),
+      images: group.images.map((image) => ({ id: image.id, url: image.url, prompt: image.prompt, item: image.item })),
       prompt: group.taskPrompt,
       title: group.title,
       inspirationId: null,
@@ -61,7 +68,7 @@ type FeedItem = {
   key: string;
   id: string;
   img: string;
-  images: { id: string; url: string; prompt: string }[];
+  images: { id: string; url: string; prompt: string; item?: HistoryItem }[];
   prompt: string;
   title: string;
   inspirationId: string | null;
@@ -82,12 +89,15 @@ export default function Home() {
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageQuality, setImageQuality] = useState('auto');
   const [imageCount, setImageCount] = useState('1');
+  const [layoutPreset, setLayoutPreset] = useState('normal');
   const [previewItem, setPreviewItem] = useState<{
     imageUrl?: string | null;
     images?: { id?: string; url: string; prompt?: string | null; title?: string | null }[];
     initialIndex?: number;
     prompt: string;
   } | null>(null);
+  const [triptychItem, setTriptychItem] = useState<HistoryItem | null>(null);
+  const [pendingTriptychTaskId, setPendingTriptychTaskId] = useState('');
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [generationPanelExpanded, setGenerationPanelExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -112,6 +122,24 @@ export default function Home() {
     inspirationSearchMode,
     inspirationAIQuery,
   } = feedState;
+
+  useEffect(() => {
+    if (!pendingTriptychTaskId) {
+      return;
+    }
+    const taskItems = taskHistoryItems.filter((item) => item.task_id === pendingTriptychTaskId);
+    const readyItem = taskItems.find((item) => item.status === 'succeeded' && item.image_url && isDouyinTriptychItem(item));
+    if (readyItem) {
+      setTriptychItem(readyItem);
+      setPendingTriptychTaskId('');
+      notifySuccess(t('douyin_triptych_ready'));
+      return;
+    }
+    const failedItem = taskItems.find((item) => item.status === 'failed');
+    if (failedItem) {
+      setPendingTriptychTaskId('');
+    }
+  }, [notifySuccess, pendingTriptychTaskId, t, taskHistoryItems]);
 
   useEffect(() => {
     const pendingPrompt = window.sessionStorage.getItem(PROMPT_TRANSFER_KEY);
@@ -152,6 +180,8 @@ export default function Home() {
       setImageScale('FAST');
     }
   }, [aspectRatio, imageScale]);
+
+  const isTriptychMode = layoutPreset === DOUYIN_TRIPTYCH_PRESET;
 
   useEffect(() => {
     if (inspirationSearchMode === 'ai') {
@@ -324,11 +354,12 @@ export default function Home() {
       return;
     }
     setLoading(true);
-    const requestedImageCount = Math.max(1, Math.min(9, Number(imageCount) || 1));
+    const requestedImageCount = isTriptychMode ? 1 : Math.max(1, Math.min(9, Number(imageCount) || 1));
     const imageOptions = {
-      size: providerImageSize(imageScale, aspectRatio),
-      aspect_ratio: aspectRatio,
+      size: isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_SIZE : providerImageSize(imageScale, aspectRatio),
+      aspect_ratio: isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_RATIO : aspectRatio,
       quality: imageQuality,
+      layout_preset: isTriptychMode ? DOUYIN_TRIPTYCH_PRESET : undefined,
     };
     try {
       const isEditMode = selectedReferences.length > 0;
@@ -347,6 +378,14 @@ export default function Home() {
         : await generateImage({ prompt, ...imageOptions, n: requestedImageCount });
       setSelectedReferences([]);
       addTask(submittedTask);
+      if (isTriptychMode) {
+        const readyItem = submittedTask.items.find((item) => item.status === 'succeeded' && item.image_url && isDouyinTriptychItem(item));
+        if (readyItem) {
+          setTriptychItem(readyItem);
+        } else {
+          setPendingTriptychTaskId(submittedTask.id);
+        }
+      }
       openDrawer();
       const nextMessage = submittedTask.status === 'running' ? t('home_message_processing') : t('home_message_queued');
       setMessage(nextMessage);
@@ -477,6 +516,9 @@ export default function Home() {
   const visibleFeed = [...(hasSearchInput ? [] : generatedFeed), ...inspirationFeed].filter((item) => item.img);
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
   const handleAspectRatioChange = (nextRatio: string) => {
+    if (isTriptychMode) {
+      return;
+    }
     setAspectRatio(nextRatio);
     if (nextRatio === '1:1' && imageScale === '4K') {
       setImageScale('2K');
@@ -704,14 +746,21 @@ export default function Home() {
                   )}
                   <div className="border-t border-primary/15 bg-surface-container-low/80 p-4">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <div className="min-w-0 truncate text-[10px] uppercase tracking-widest text-secondary">{item.title}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        {images.some((image) => isDouyinTriptychItem(image.item)) ? (
+                          <span className="shrink-0 border border-secondary/35 bg-secondary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-widest text-secondary">
+                            {t('douyin_triptych_tag')}
+                          </span>
+                        ) : null}
+                        <div className="min-w-0 truncate text-[10px] uppercase tracking-widest text-secondary">{item.title}</div>
+                      </div>
                       <div className="shrink-0 font-code-data text-[10px] text-white/25">
                         {item.id}
                         {isBatch ? ` x${images.length}` : ''}
                       </div>
                     </div>
                     <p className="mb-3 line-clamp-3 text-sm text-white/80">{item.prompt}</p>
-                    <div className={`grid gap-2 ${canFavorite ? 'grid-cols-[44px_44px_1fr]' : 'grid-cols-[44px_1fr]'}`}>
+                    <div className={`grid gap-2 ${canFavorite ? 'grid-cols-[44px_44px_44px_1fr]' : 'grid-cols-[44px_44px_1fr]'}`}>
                       <button
                         className="flex h-10 items-center justify-center border border-white/10 bg-white/5 text-white/70 transition-all duration-300 hover:border-primary hover:text-primary"
                         type="button"
@@ -731,6 +780,18 @@ export default function Home() {
                         title={t('history_preview')}
                       >
                         <Maximize2 size={15} />
+                      </button>
+                      <button
+                        className="flex h-10 items-center justify-center border border-white/10 bg-white/5 text-white/70 transition-all duration-300 hover:border-secondary hover:text-secondary disabled:pointer-events-none disabled:opacity-35"
+                        type="button"
+                        disabled={!images.some((image) => isDouyinTriptychItem(image.item))}
+                        onClick={() => {
+                          const target = images.find((image) => isDouyinTriptychItem(image.item))?.item;
+                          if (target) setTriptychItem(target);
+                        }}
+                        title={t('douyin_triptych_open')}
+                      >
+                        <Scissors size={15} />
                       </button>
                       {canFavorite ? (
                         <button
@@ -818,11 +879,11 @@ export default function Home() {
             {t('home_mode')}: {selectedReferences.length ? t('home_mode_edit') : t('home_mode_generate')}
           </div>
           <div className="hidden items-center gap-2 text-[10px] uppercase tracking-widest text-white/45 md:flex">
-            <span>{SIZE_LABELS[imageScale] || imageScale}</span>
-            <span>{aspectRatio}</span>
-            <span>{providerImageSize(imageScale, aspectRatio)}</span>
+            <span>{isTriptychMode ? t('home_layout_douyin_triptych') : SIZE_LABELS[imageScale] || imageScale}</span>
+            <span>{isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_RATIO : aspectRatio}</span>
+            <span>{isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_SIZE : providerImageSize(imageScale, aspectRatio)}</span>
             <span>{imageQuality}</span>
-            {Number(imageCount) > 1 ? <span>x{imageCount}</span> : null}
+            {!isTriptychMode && Number(imageCount) > 1 ? <span>x{imageCount}</span> : null}
           </div>
           <button
             type="button"
@@ -874,22 +935,37 @@ export default function Home() {
 
         {generationPanelExpanded ? (
           <>
-            <div className="mb-2 grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-[128px_112px_104px_84px_1fr_auto]">
+            <div className="mb-2 grid grid-cols-2 items-end gap-2 sm:grid-cols-4 lg:grid-cols-[112px_128px_112px_104px_84px_1fr_auto]">
+              <GenerationSelect
+                label={t('home_layout_preset')}
+                value={layoutPreset}
+                onChange={setLayoutPreset}
+                options={['normal', DOUYIN_TRIPTYCH_PRESET]}
+                getOptionLabel={(option) => option === DOUYIN_TRIPTYCH_PRESET ? t('home_layout_douyin_triptych') : t('home_layout_normal')}
+              />
               <GenerationSelect
                 label={t('home_size')}
-                value={imageScale}
+                value={isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_SIZE : imageScale}
                 onChange={setImageScale}
-                options={SIZE_OPTIONS}
+                options={isTriptychMode ? [DOUYIN_TRIPTYCH_PROVIDER_SIZE] : SIZE_OPTIONS}
                 getOptionLabel={(option) => SIZE_LABELS[option] || option}
                 isOptionDisabled={(option) => !isSupportedImagePreset(option, aspectRatio)}
+                disabled={isTriptychMode}
               />
-              <GenerationSelect label={t('home_aspect_ratio')} value={aspectRatio} onChange={handleAspectRatioChange} options={ASPECT_RATIO_OPTIONS} />
+              <GenerationSelect
+                label={t('home_aspect_ratio')}
+                value={isTriptychMode ? DOUYIN_TRIPTYCH_PROVIDER_RATIO : aspectRatio}
+                onChange={handleAspectRatioChange}
+                options={isTriptychMode ? [DOUYIN_TRIPTYCH_PROVIDER_RATIO] : ASPECT_RATIO_OPTIONS}
+                disabled={isTriptychMode}
+              />
               <GenerationSelect label={t('home_quality')} value={imageQuality} onChange={setImageQuality} options={QUALITY_OPTIONS} />
               <GenerationSelect
                 label={t('home_image_count')}
-                value={imageCount}
+                value={isTriptychMode ? '1' : imageCount}
                 onChange={setImageCount}
-                options={IMAGE_COUNT_OPTIONS}
+                options={isTriptychMode ? ['1'] : IMAGE_COUNT_OPTIONS}
+                disabled={isTriptychMode}
               />
               <div className="col-span-2 flex min-w-0 gap-2 sm:col-span-4 lg:col-span-2">
                 <label className="flex h-9 min-w-0 flex-1 items-center gap-2 border border-primary/20 bg-black px-3 text-primary focus-within:border-primary">
@@ -1020,6 +1096,7 @@ export default function Home() {
         subtitle={previewItem?.prompt}
         onClose={() => setPreviewItem(null)}
       />
+      <DouyinTriptychModal item={triptychItem} onClose={() => setTriptychItem(null)} />
       <PromptEditorModal
         open={promptEditorOpen}
         value={promptValue}

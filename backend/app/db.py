@@ -1515,6 +1515,9 @@ def _public_task_request_metadata(value: Any) -> dict[str, Any] | None:
             "extra_requirements": ecommerce.get("extra_requirements") or "",
             "analysis": ecommerce.get("analysis") if isinstance(ecommerce.get("analysis"), dict) else None,
         }
+    layout_preset = str(value.get("layout_preset") or "").strip()
+    if layout_preset:
+        metadata["layout_preset"] = layout_preset
     return metadata or None
 
 

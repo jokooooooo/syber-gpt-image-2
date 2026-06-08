@@ -58,6 +58,7 @@ export type HistoryItem = {
   } | null;
   task_request: {
     reference_notes?: ImageReferenceNote[];
+    layout_preset?: string;
     ecommerce?: {
       product_name: string;
       materials: string;
@@ -289,6 +290,7 @@ export type GeneratePayload = {
   aspect_ratio?: string;
   quality?: string;
   n?: number;
+  layout_preset?: string;
 };
 
 export type ImageReferenceInput = {
@@ -845,6 +847,14 @@ export function listImageTasks(params: { limit?: number; status?: string[] } = {
 
 export function taskDownloadUrl(taskId: string) {
   return `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}/download.zip`;
+}
+
+export function douyinTriptychPartDownloadUrl(historyId: string, part: 'left' | 'center' | 'right' | number) {
+  return `${API_BASE}/api/history/${encodeURIComponent(historyId)}/douyin-triptych/${encodeURIComponent(String(part))}.png`;
+}
+
+export function douyinTriptychZipDownloadUrl(historyId: string) {
+  return `${API_BASE}/api/history/${encodeURIComponent(historyId)}/douyin-triptych.zip`;
 }
 
 export async function waitForImageTask(

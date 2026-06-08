@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Search, Filter, Download, Trash2, RefreshCw, ArrowDown, Loader2, Maximize2, Globe2, Archive } from 'lucide-react';
+import { Search, Filter, Download, Trash2, RefreshCw, ArrowDown, Loader2, Maximize2, Globe2, Archive, Scissors } from 'lucide-react';
 import { deleteHistory, formatDate, generateImage, getHistory, HistoryItem, publishHistory, taskDownloadUrl, unpublishHistory } from '../api';
 import { useAuth } from '../auth';
 import ImagePreviewModal from '../components/ImagePreviewModal';
+import DouyinTriptychModal from '../components/DouyinTriptychModal';
 import MasonryGrid from '../components/MasonryGrid';
 import RetryImage from '../components/RetryImage';
+import { isDouyinTriptychItem } from '../douyinTriptych';
 import { groupHistoryItems, HistoryGroup, mergeHistoryItems } from '../historyGroups';
 import { useNotifier } from '../notifications';
 import { useSite } from '../site';
@@ -46,6 +48,7 @@ export default function History() {
     initialIndex?: number;
     prompt: string;
   } | null>(null);
+  const [triptychItem, setTriptychItem] = useState<HistoryItem | null>(null);
   const [publishingIds, setPublishingIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -174,6 +177,7 @@ export default function History() {
           const isBatch = group.images.length > 1;
           const previewImage = group.images[0]?.url || item.image_url;
           const publishDisabled = publishingIds.includes(group.key) || group.images.length === 0;
+          const triptychTarget = group.items.find((historyItem) => isDouyinTriptychItem(historyItem) && historyItem.image_url);
           return (
           <div
             className={`overflow-hidden bg-black border border-white/10 ${colors.borderHover} transition-all duration-300`}
@@ -229,6 +233,7 @@ export default function History() {
                 <span>{formatDate(item.created_at)}</span>
                 <span>{item.size}</span>
                 {item.aspect_ratio ? <span>{item.aspect_ratio}</span> : null}
+                {triptychTarget ? <span className="text-secondary">{t('douyin_triptych_tag')}</span> : null}
                 {isBatch ? <span>x{group.images.length}</span> : null}
                 {group.allPublished ? (
                   <span className="text-tertiary">{t('history_published')}</span>
@@ -252,7 +257,7 @@ export default function History() {
                 {publishingIds.includes(group.key) ? <Loader2 className="animate-spin" size={14} /> : <Globe2 size={14} />}
                 {group.allPublished ? t('history_unpublish_case') : t('history_publish_case')}
               </button>
-              <div className="grid grid-cols-4 gap-2 sm:grid-cols-[44px_44px_44px_44px_1fr]">
+              <div className="grid grid-cols-5 gap-2 sm:grid-cols-[44px_44px_44px_44px_44px_1fr]">
                 <button
                   className="flex h-10 items-center justify-center border border-white/20 bg-white/5 text-white transition-all hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-35"
                   type="button"
@@ -292,6 +297,17 @@ export default function History() {
                   <Archive size={14} />
                 </a>
                 <button
+                  className="flex h-10 items-center justify-center border border-white/20 bg-white/5 text-white transition-all hover:border-secondary hover:text-secondary disabled:cursor-not-allowed disabled:opacity-35"
+                  title={t('douyin_triptych_open')}
+                  type="button"
+                  disabled={!triptychTarget}
+                  onClick={() => {
+                    if (triptychTarget) setTriptychItem(triptychTarget);
+                  }}
+                >
+                  <Scissors size={14} />
+                </button>
+                <button
                   onClick={() => handleDelete(group)}
                   className="flex h-10 items-center justify-center border border-error/20 bg-error/5 text-error transition-all hover:bg-error/20"
                   title={t('history_delete')}
@@ -301,7 +317,7 @@ export default function History() {
                 </button>
                 <button
                   onClick={() => handleRegenerate(group)}
-                  className={`col-span-4 flex h-10 min-w-0 items-center justify-center gap-2 px-3 text-xs font-black uppercase sm:col-span-1 ${colors.btnBg} ${colors.btnText} ${colors.btnShadow} shadow-white/40 transition-all duration-300 hover:bg-white hover:border-white`}
+                  className={`col-span-5 flex h-10 min-w-0 items-center justify-center gap-2 px-3 text-xs font-black uppercase sm:col-span-1 ${colors.btnBg} ${colors.btnText} ${colors.btnShadow} shadow-white/40 transition-all duration-300 hover:bg-white hover:border-white`}
                   type="button"
                 >
                   <RefreshCw size={14} />
@@ -333,6 +349,7 @@ export default function History() {
         subtitle={previewItem?.prompt}
         onClose={() => setPreviewItem(null)}
       />
+      <DouyinTriptychModal item={triptychItem} onClose={() => setTriptychItem(null)} />
     </div>
   );
 }
